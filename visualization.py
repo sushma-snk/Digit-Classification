@@ -11,27 +11,32 @@ def plot_probabilities(
     prediction
 ):
 
-    digits = np.arange(10)
+    digits = np.arange(
+        10
+    )
+
 
     fig, ax = plt.subplots(
         figsize=(10, 5)
     )
+
 
     bars = ax.bar(
         digits,
         probabilities
     )
 
+
     ax.set_xlabel(
         "Digit"
     )
 
     ax.set_ylabel(
-        "Voting probability"
+        "Probability"
     )
 
     ax.set_title(
-        "KNN Class Voting Distribution"
+        "SVM Class Probabilities"
     )
 
     ax.set_xticks(
@@ -42,6 +47,7 @@ def plot_probabilities(
         0,
         1.05
     )
+
 
     for i, value in enumerate(
         probabilities
@@ -54,9 +60,11 @@ def plot_probabilities(
             ha="center"
         )
 
+
     bars[prediction].set_alpha(
         0.8
     )
+
 
     fig.tight_layout()
 
@@ -64,56 +72,121 @@ def plot_probabilities(
 
 
 # ============================================================
-# NEAREST NEIGHBORS
+# FEATURE IMPORTANCE
 # ============================================================
 
-def plot_nearest_neighbors(
-    images,
-    labels,
-    distances
+def plot_feature_importance(
+    model,
+    prediction
 ):
 
-    number = len(
-        images
-    )
+    # --------------------------------------------------------
+    # SVC with RBF kernel does not have coef_
+    # --------------------------------------------------------
 
-    fig, axes = plt.subplots(
-        1,
-        number,
-        figsize=(15, 3)
-    )
-
-    if number == 1:
-
-        axes = [axes]
-
-    for i in range(
-        number
+    if not hasattr(
+        model,
+        "coef_"
     ):
 
-        image = images[i].reshape(
-            28,
-            28
-        )
+        return None
 
-        axes[i].imshow(
-            image,
-            cmap="gray"
-        )
 
-        axes[i].set_title(
-            f"Digit: {labels[i]}\n"
-            f"Distance: {distances[i]:.2f}"
-        )
+    coefficients = \
+        model.coef_[prediction]
 
-        axes[i].axis(
-            "off"
-        )
 
-    fig.suptitle(
-        "Nearest MNIST Training Examples",
-        fontsize=16
+    importance = np.abs(
+        coefficients
     )
+
+
+    importance = importance.reshape(
+        28,
+        28
+    )
+
+
+    fig, ax = plt.subplots(
+        figsize=(6, 6)
+    )
+
+
+    ax.imshow(
+        importance,
+        cmap="hot"
+    )
+
+
+    ax.set_title(
+        f"Pixel Importance for Digit {prediction}"
+    )
+
+
+    ax.axis(
+        "off"
+    )
+
+
+    fig.tight_layout()
+
+    return fig
+
+
+# ============================================================
+# CONFUSION MATRIX
+# ============================================================
+
+def plot_confusion_matrix(
+    cm
+):
+
+    fig, ax = plt.subplots(
+        figsize=(8, 7)
+    )
+
+
+    ax.imshow(
+        cm,
+        cmap="Blues"
+    )
+
+
+    ax.set_xlabel(
+        "Predicted label"
+    )
+
+    ax.set_ylabel(
+        "True label"
+    )
+
+    ax.set_title(
+        "MNIST Confusion Matrix"
+    )
+
+
+    ax.set_xticks(
+        range(10)
+    )
+
+    ax.set_yticks(
+        range(10)
+    )
+
+
+    for i in range(10):
+
+        for j in range(10):
+
+            ax.text(
+                j,
+                i,
+                str(cm[i, j]),
+                ha="center",
+                va="center",
+                fontsize=8
+            )
+
 
     fig.tight_layout()
 
