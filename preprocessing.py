@@ -12,7 +12,7 @@ def preprocess_image(
 ):
 
     # ========================================================
-    # STEP 1 — Grayscale
+    # 1. GRAYSCALE
     # ========================================================
 
     gray = image.convert(
@@ -29,7 +29,7 @@ def preprocess_image(
 
 
     # ========================================================
-    # STEP 2 — Determine background
+    # 2. CONVERT TO ARRAY
     # ========================================================
 
     arr = np.array(
@@ -38,7 +38,13 @@ def preprocess_image(
         np.float32
     )
 
+
     height, width = arr.shape
+
+
+    # ========================================================
+    # 3. DETECT BACKGROUND
+    # ========================================================
 
     border = np.concatenate(
         [
@@ -53,6 +59,7 @@ def preprocess_image(
         border
     )
 
+
     center = arr[
         height // 4:
         3 * height // 4,
@@ -65,12 +72,10 @@ def preprocess_image(
         center
     )
 
-    # ========================================================
-    # MNIST convention:
-    #
-    # background = black
-    # digit       = white
-    # ========================================================
+
+    # MNIST:
+    # black background
+    # white digit
 
     if center_mean < border_mean:
 
@@ -81,12 +86,13 @@ def preprocess_image(
 
 
     # ========================================================
-    # STEP 3 — Normalize
+    # 4. NORMALIZE
     # ========================================================
 
     minimum = arr.min()
 
     maximum = arr.max()
+
 
     if maximum > minimum:
 
@@ -94,8 +100,9 @@ def preprocess_image(
             (arr - minimum)
             /
             (maximum - minimum)
-            * 255
+            * 255.0
         )
+
 
     normalized = Image.fromarray(
         arr.astype(
@@ -107,13 +114,14 @@ def preprocess_image(
 
 
     # ========================================================
-    # STEP 4 — Threshold
+    # 5. THRESHOLD
     # ========================================================
 
     threshold = np.percentile(
         arr,
         65
     )
+
 
     binary = np.where(
         arr > threshold,
@@ -123,20 +131,23 @@ def preprocess_image(
         np.uint8
     )
 
+
     binary_image = Image.fromarray(
         binary
     )
 
 
     # ========================================================
-    # Find digit bounding box
+    # 6. FIND DIGIT
     # ========================================================
 
     bbox = binary_image.getbbox()
 
+
     if bbox is not None:
 
         left, top, right, bottom = bbox
+
 
         digit_width = (
             right - left
@@ -146,6 +157,7 @@ def preprocess_image(
             bottom - top
         )
 
+
         margin = int(
             0.15 *
             max(
@@ -153,6 +165,7 @@ def preprocess_image(
                 digit_height
             )
         )
+
 
         left = max(
             0,
@@ -174,6 +187,7 @@ def preprocess_image(
             bottom + margin
         )
 
+
         cropped = binary_image.crop(
             (
                 left,
@@ -192,13 +206,15 @@ def preprocess_image(
 
 
     # ========================================================
-    # STEP 5 — Resize to 20 × 20 maximum
+    # 7. RESIZE
     # ========================================================
 
     target_size = 20
 
+
     crop_width, crop_height = \
         cropped.size
+
 
     if crop_width >= crop_height:
 
@@ -226,6 +242,7 @@ def preprocess_image(
             )
         )
 
+
     resized = cropped.resize(
         (
             new_width,
@@ -236,7 +253,7 @@ def preprocess_image(
 
 
     # ========================================================
-    # STEP 6 — Place inside 28 × 28 image
+    # 8. 28 × 28 CANVAS
     # ========================================================
 
     canvas = Image.new(
@@ -248,15 +265,18 @@ def preprocess_image(
         0
     )
 
+
     x = (
         28 -
         resized.width
     ) // 2
 
+
     y = (
         28 -
         resized.height
     ) // 2
+
 
     canvas.paste(
         resized,
@@ -266,11 +286,12 @@ def preprocess_image(
         )
     )
 
+
     processed = canvas
 
 
     # ========================================================
-    # Return
+    # RETURN
     # ========================================================
 
     if return_steps:
@@ -284,5 +305,6 @@ def preprocess_image(
                 processed
             ]
         )
+
 
     return processed
