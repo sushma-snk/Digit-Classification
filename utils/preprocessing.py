@@ -1,377 +1,268 @@
 import numpy as np
-import matplotlib.pyplot as plt
-
-from PIL import Image
-from PIL import ImageOps
-from PIL import ImageFilter
+from PIL import Image, ImageOps, ImageFilter
 
 
-def preprocess_image(image):
+def preprocess_image(
+    image,
+    return_steps=False
+):
     """
-    Convert an uploaded/camera image into a 28x28 MNIST-style image.
+    Convert a real-world handwritten digit image
+    into MNIST-like 28 x 28 format.
 
-    Steps:
-    1. Convert to grayscale
-    2. Improve contrast
-    3. Detect foreground/background
-    4. Crop the digit
-    5. Resize while preserving aspect ratio
-    6. Center the digit in a 28x28 image
+    Returns
+    -------
+    processed_image : PIL.Image
+        Final 28 x 28 image.
 
-    Returns:
-        processed_image
-        debug_images
+    processing_steps : list
+        Intermediate processing images.
     """
 
-    original = image.copy()
-
     # ========================================================
-    # 1. GRAYSCALE
+    # STEP 1: Grayscale
     # ========================================================
 
-    gray = ImageOps.grayscale(image)
+    gray = image.convert("L")
 
-    gray = ImageOps.autocontrast(gray)
-
-    # ========================================================
-    # 2. CONVERT TO ARRAY
-    # ========================================================
-
-    arr = np.asarray(
-        gray
-    ).astype(
-        np.uint8
+    # Slight smoothing
+    gray = gray.filter(
+        ImageFilter.GaussianBlur(radius=0.5)
     )
 
+    step1 = gray.copy()
+
+
     # ========================================================
-    # 3. ESTIMATE BACKGROUND
+    # Convert to numpy
     # ========================================================
+
+    arr = np.array(gray).astype(
+        np.float32
+    )
+
+
+    # ========================================================
+    # STEP 2: Determine foreground/background
+    # ========================================================
+
+    h, w = arr.shape
 
     border_pixels = np.concatenate(
         [
             arr[0, :],
             arr[-1, :],
             arr[:, 0],
-            arr[:, -1],
+            arr[:, -1]
         ]
     )
 
-    background_mean = float(
-        np.mean(
-            border_pixels
-        )
+    border_mean = np.mean(
+        border_pixels
     )
 
-    center_mean = float(
-        np.mean(
-            arr
+    center_region = arr[
+        h // 4 : 3 * h // 4,
+        w // 4 : 3 * w // 4
+    ]
+
+    center_mean = np.mean(
+        center_region
+    )
+
+    # MNIST format:
+    # background = black
+    # digit = white
+
+    if center_mean < border_mean:
+
+        arr = 255.0 - arr
+
+
+    # ========================================================
+    # STEP 3: Normalize
+    # ========================================================
+
+    min_value = arr.min()
+    max_value = arr.max()
+
+    if max_value > min_value:
+
+        arr = (
+            (arr - min_value)
+            /
+            (max_value - min_value)
+            * 255.0
         )
+
+    normalized = Image.fromarray(
+        arr.astype(np.uint8)
+    )
+
+    step2 = normalized.copy()
+
+
+    # ========================================================
+    # STEP 4: Threshold
+    # ========================================================
+
+    threshold = np.percentile(
+        arr,
+        65
+    )
+
+    binary = np.where(
+        arr > threshold,
+        255,
+        0
+    ).astype(np.uint8)
+
+    binary_image = Image.fromarray(
+        binary
     )
 
     # ========================================================
-    # 4. INVERT IMAGE IF NECESSARY
+    # Find digit bounding box
     # ========================================================
 
-    if background_mean > center_mean:
+    bbox = binary_image.getbbox()
 
-        # Dark digit on light background
+    if bbox is not None:
 
-        inverted = ImageOps.invert(
-            gray
-        )
+        left, top, right, bottom = bbox
 
-    else:
-
-        # Already light digit on dark background
-
-        inverted = gray
-
-    # ========================================================
-    # 5. SLIGHT BLUR
-    # ========================================================
-
-    inverted = inverted.filter(
-        ImageFilter.GaussianBlur(
-            radius=0.4
-        )
-    )
-
-    arr2 = np.asarray(
-        inverted
-    )
-
-    # ========================================================
-    # 6. FIND DIGIT REGION
-    # ========================================================
-
-    threshold = max(
-        20,
-        np.percentile(
-            arr2,
-            70
-        )
-    )
-
-    mask = (
-        arr2 > threshold
-    )
-
-    if np.any(mask):
-
-        ys, xs = np.where(
-            mask
-        )
-
-        x0 = xs.min()
-        x1 = xs.max()
-
-        y0 = ys.min()
-        y1 = ys.max()
-
-        # ----------------------------------------------
-        # Add padding around digit
-        # ----------------------------------------------
-
-        digit_width = (
-            x1 - x0 + 1
-        )
-
-        digit_height = (
-            y1 - y0 + 1
-        )
-
-        padding = max(
-            4,
-            int(
-                0.15 *
-                max(
-                    digit_width,
-                    digit_height
-                )
+        # Add margin
+        margin = int(
+            0.15 *
+            max(
+                right - left,
+                bottom - top
             )
         )
 
-        x0 = max(
+        left = max(
             0,
-            x0 - padding
+            left - margin
         )
 
-        y0 = max(
+        top = max(
             0,
-            y0 - padding
+            top - margin
         )
 
-        x1 = min(
-            arr2.shape[1] - 1,
-            x1 + padding
+        right = min(
+            binary_image.width,
+            right + margin
         )
 
-        y1 = min(
-            arr2.shape[0] - 1,
-            y1 + padding
+        bottom = min(
+            binary_image.height,
+            bottom + margin
         )
 
-        cropped = inverted.crop(
+        cropped = binary_image.crop(
             (
-                x0,
-                y0,
-                x1 + 1,
-                y1 + 1,
+                left,
+                top,
+                right,
+                bottom
             )
         )
 
     else:
 
-        cropped = inverted
+        cropped = binary_image
+
+
+    step3 = cropped.copy()
+
 
     # ========================================================
-    # 7. RESIZE TO 20 × 20
+    # STEP 5: Resize while preserving aspect ratio
     # ========================================================
 
-    cropped.thumbnail(
+    target_size = 20
+
+    width, height = cropped.size
+
+    if width > height:
+
+        new_width = target_size
+
+        new_height = max(
+            1,
+            int(
+                height *
+                target_size /
+                width
+            )
+        )
+
+    else:
+
+        new_height = target_size
+
+        new_width = max(
+            1,
+            int(
+                width *
+                target_size /
+                height
+            )
+        )
+
+    resized = cropped.resize(
         (
-            20,
-            20
+            new_width,
+            new_height
         ),
         Image.Resampling.LANCZOS
     )
 
+
     # ========================================================
-    # 8. CREATE 28 × 28 CANVAS
+    # STEP 6: Put digit in 28 x 28 canvas
     # ========================================================
 
     canvas = Image.new(
         "L",
-        (
-            28,
-            28
-        ),
+        (28, 28),
         0
     )
 
-    # ========================================================
-    # 9. CENTER DIGIT
-    # ========================================================
-
-    left = (
-        28 -
-        cropped.width
+    x_offset = (
+        28 - resized.width
     ) // 2
 
-    top = (
-        28 -
-        cropped.height
+    y_offset = (
+        28 - resized.height
     ) // 2
 
     canvas.paste(
-        cropped,
+        resized,
         (
-            left,
-            top
+            x_offset,
+            y_offset
         )
     )
 
-    processed_image = canvas
+    processed = canvas
+
 
     # ========================================================
-    # DEBUG IMAGES
+    # Return
     # ========================================================
 
-    debug_images = {
+    if return_steps:
 
-        "Original":
-            original,
-
-        "Grayscale":
-            gray,
-
-        "Inverted / foreground":
-            inverted,
-
-        "Cropped":
-            cropped,
-
-        "Centered 28×28":
-            processed_image,
-
-    }
-
-    return (
-        processed_image,
-        debug_images
-    )
-
-
-# ============================================================
-# PREPROCESSING VISUALIZATION
-# ============================================================
-
-def make_debug_figure(
-    original,
-    debug_images
-):
-
-    fig, axes = plt.subplots(
-        1,
-        5,
-        figsize=(
-            15,
-            3.5
+        return (
+            processed,
+            [
+                step1,
+                step2,
+                step3,
+                processed
+            ]
         )
-    )
 
-    # --------------------------------------------------------
-    # ORIGINAL
-    # --------------------------------------------------------
-
-    axes[0].imshow(
-        original
-    )
-
-    axes[0].set_title(
-        "Original"
-    )
-
-    axes[0].axis(
-        "off"
-    )
-
-    # --------------------------------------------------------
-    # GRAYSCALE
-    # --------------------------------------------------------
-
-    axes[1].imshow(
-        debug_images[
-            "Grayscale"
-        ],
-        cmap="gray"
-    )
-
-    axes[1].set_title(
-        "Grayscale"
-    )
-
-    axes[1].axis(
-        "off"
-    )
-
-    # --------------------------------------------------------
-    # FOREGROUND
-    # --------------------------------------------------------
-
-    axes[2].imshow(
-        debug_images[
-            "Inverted / foreground"
-        ],
-        cmap="gray"
-    )
-
-    axes[2].set_title(
-        "Foreground"
-    )
-
-    axes[2].axis(
-        "off"
-    )
-
-    # --------------------------------------------------------
-    # CROPPED
-    # --------------------------------------------------------
-
-    axes[3].imshow(
-        debug_images[
-            "Cropped"
-        ],
-        cmap="gray"
-    )
-
-    axes[3].set_title(
-        "Cropped"
-    )
-
-    axes[3].axis(
-        "off"
-    )
-
-    # --------------------------------------------------------
-    # FINAL 28 × 28
-    # --------------------------------------------------------
-
-    axes[4].imshow(
-        debug_images[
-            "Centered 28×28"
-        ],
-        cmap="gray"
-    )
-
-    axes[4].set_title(
-        "CNN Input"
-    )
-
-    axes[4].axis(
-        "off"
-    )
-
-    fig.tight_layout()
-
-    return fig
+    return processed
