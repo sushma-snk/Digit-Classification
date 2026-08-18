@@ -1,22 +1,28 @@
 import os
 import numpy as np
 import streamlit as st
-import tensorflow as tf
 from PIL import Image
 
-from utils.preprocessing import preprocess_image
-from utils.visualization import (
-    plot_prediction_probabilities,
-    plot_feature_maps
+from model_utils import (
+    load_or_train_model,
+    predict_digit,
+    get_nearest_neighbors
+)
+
+from preprocessing import preprocess_image
+
+from visualization import (
+    plot_probabilities,
+    plot_nearest_neighbors
 )
 
 
 # ============================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
-    page_title="MNIST Digit Classifier",
+    page_title="MNIST ML Classifier",
     page_icon="🔢",
     layout="wide"
 )
@@ -30,17 +36,17 @@ st.markdown(
     """
     <style>
 
-    .main-title {
-        font-size: 42px;
-        font-weight: 700;
+    .title {
         text-align: center;
+        font-size: 42px;
+        font-weight: bold;
         margin-bottom: 5px;
     }
 
     .subtitle {
         text-align: center;
-        font-size: 18px;
         color: #666;
+        font-size: 18px;
         margin-bottom: 30px;
     }
 
@@ -49,17 +55,16 @@ st.markdown(
         border-radius: 15px;
         text-align: center;
         background-color: #f1f5f9;
-        margin-top: 20px;
     }
 
-    .prediction-digit {
+    .prediction {
         font-size: 80px;
-        font-weight: 800;
+        font-weight: bold;
     }
 
-    .section-title {
+    .section {
         font-size: 26px;
-        font-weight: 700;
+        font-weight: bold;
         margin-top: 25px;
     }
 
@@ -74,13 +79,13 @@ st.markdown(
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">🔢 MNIST Handwritten Digit Classifier</div>',
+    '<div class="title">🔢 MNIST Handwritten Digit Classifier</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
     '<div class="subtitle">'
-    'Upload or capture a handwritten digit and see how a CNN classifies it.'
+    'Interactive Machine Learning Demonstration using K-Nearest Neighbors'
     '</div>',
     unsafe_allow_html=True
 )
@@ -90,59 +95,48 @@ st.markdown(
 # MODEL
 # ============================================================
 
-MODEL_PATH = "mnist_cnn.keras"
+MODEL_PATH = "models/mnist_knn.pkl"
 
 
 @st.cache_resource
 def load_model():
 
-    if os.path.exists(MODEL_PATH):
-
-        model = tf.keras.models.load_model(MODEL_PATH)
-
-    else:
-
-        st.info(
-            "The trained model was not found. "
-            "Training a CNN on MNIST for the first time..."
+    model, X_train, y_train, X_test, y_test = \
+        load_or_train_model(
+            model_path=MODEL_PATH
         )
 
-        from train_model import train_model
+    return (
+        model,
+        X_train,
+        y_train,
+        X_test,
+        y_test
+    )
 
-        model = train_model(
-            epochs=3,
-            save_path=MODEL_PATH
-        )
 
-    return model
+with st.spinner(
+    "Loading MNIST dataset and KNN model..."
+):
 
-
-with st.spinner("Loading MNIST classifier..."):
-    model = load_model()
+    model, X_train, y_train, X_test, y_test = load_model()
 
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-st.sidebar.header("⚙️ Demonstration Controls")
-
-st.sidebar.write(
-    """
-    This application demonstrates the complete machine-learning
-    pipeline:
-
-    **Input → Preprocessing → CNN → Probabilities → Prediction**
-    """
+st.sidebar.header(
+    "⚙️ Demonstration Controls"
 )
 
-show_processing = st.sidebar.checkbox(
-    "Show preprocessing steps",
+show_preprocessing = st.sidebar.checkbox(
+    "Show preprocessing",
     value=True
 )
 
-show_feature_maps = st.sidebar.checkbox(
-    "Show CNN feature maps",
+show_neighbors = st.sidebar.checkbox(
+    "Show nearest neighbors",
     value=True
 )
 
@@ -151,20 +145,46 @@ show_probabilities = st.sidebar.checkbox(
     value=True
 )
 
+k_value = st.sidebar.slider(
+    "Number of neighbors (K)",
+    min_value=1,
+    max_value=9,
+    value=5,
+    step=2
+)
+
+st.sidebar.divider()
+
+st.sidebar.write(
+    """
+    ### Algorithm
+
+    **K-Nearest Neighbors (KNN)**
+
+    The classifier compares the input digit with
+    stored MNIST training examples.
+
+    The K most similar examples vote for the
+    final class.
+    """
+)
+
 
 # ============================================================
-# INPUT METHOD
+# INPUT
 # ============================================================
 
 st.markdown(
-    '<div class="section-title">1️⃣ Provide a handwritten digit</div>',
+    '<div class="section">'
+    '1️⃣ Provide a handwritten digit'
+    '</div>',
     unsafe_allow_html=True
 )
 
 input_method = st.radio(
     "Choose input method:",
     [
-        "Upload an image",
+        "Upload image",
         "Use camera"
     ],
     horizontal=True
@@ -177,16 +197,22 @@ image = None
 # UPLOAD
 # ============================================================
 
-if input_method == "Upload an image":
+if input_method == "Upload image":
 
     uploaded_file = st.file_uploader(
-        "Upload a handwritten digit image",
-        type=["png", "jpg", "jpeg"]
+        "Upload a handwritten digit",
+        type=[
+            "png",
+            "jpg",
+            "jpeg"
+        ]
     )
 
     if uploaded_file is not None:
 
-        image = Image.open(uploaded_file).convert("L")
+        image = Image.open(
+            uploaded_file
+        ).convert("L")
 
 
 # ============================================================
@@ -196,12 +222,14 @@ if input_method == "Upload an image":
 else:
 
     camera_image = st.camera_input(
-        "Take a picture of a handwritten digit"
+        "Take a photograph of a handwritten digit"
     )
 
     if camera_image is not None:
 
-        image = Image.open(camera_image).convert("L")
+        image = Image.open(
+            camera_image
+        ).convert("L")
 
 
 # ============================================================
@@ -210,100 +238,114 @@ else:
 
 if image is not None:
 
+    # --------------------------------------------------------
+    # IMAGE DISPLAY
+    # --------------------------------------------------------
+
     st.markdown(
-        '<div class="section-title">2️⃣ Input image</div>',
+        '<div class="section">'
+        '2️⃣ Input image'
+        '</div>',
         unsafe_allow_html=True
     )
 
     col1, col2 = st.columns(2)
 
-    # --------------------------------------------------------
-    # ORIGINAL IMAGE
-    # --------------------------------------------------------
-
     with col1:
 
-        st.subheader("Original image")
+        st.subheader(
+            "Original image"
+        )
 
         st.image(
             image,
             width=300
         )
 
+
     # --------------------------------------------------------
     # PREPROCESSING
     # --------------------------------------------------------
 
-    processed_image, processing_steps = preprocess_image(
-        image,
-        return_steps=True
-    )
+    processed_image, steps = \
+        preprocess_image(
+            image,
+            return_steps=True
+        )
 
     with col2:
 
-        st.subheader("Processed MNIST image")
+        st.subheader(
+            "MNIST-style image"
+        )
 
         st.image(
             processed_image,
-            width=300,
-            clamp=True
+            width=300
         )
 
 
     # ========================================================
-    # SHOW PREPROCESSING
+    # PREPROCESSING VISUALIZATION
     # ========================================================
 
-    if show_processing:
+    if show_preprocessing:
 
         st.markdown(
-            '<div class="section-title">'
-            '3️⃣ How the image is prepared'
+            '<div class="section">'
+            '3️⃣ Preprocessing'
             '</div>',
             unsafe_allow_html=True
         )
 
         st.write(
             """
-            A real-world photograph is not directly suitable for the
-            MNIST model. The image is converted into the format expected
-            by the neural network.
+            The original photograph cannot be directly given
+            to the MNIST classifier. It is converted into the
+            same 28 × 28 grayscale representation used by MNIST.
             """
         )
 
-        pcols = st.columns(4)
+        cols = st.columns(4)
 
-        step_names = [
+        names = [
             "Grayscale",
-            "Invert / Normalize",
-            "Crop digit",
-            "Resize to 28 × 28"
+            "Normalized",
+            "Digit extracted",
+            "28 × 28 image"
         ]
 
-        for i, (name, step_image) in enumerate(
-            zip(step_names, processing_steps)
-        ):
+        for i in range(4):
 
-            with pcols[i]:
+            with cols[i]:
 
-                st.caption(name)
+                st.caption(
+                    names[i]
+                )
 
                 st.image(
-                    step_image,
+                    steps[i],
                     use_container_width=True
                 )
 
 
     # ========================================================
-    # MODEL INPUT
+    # CONVERT TO 784 FEATURES
     # ========================================================
 
-    input_array = np.array(processed_image).astype(
-        "float32"
-    ) / 255.0
+    image_array = np.array(
+        processed_image
+    ).astype(
+        np.float32
+    )
 
-    input_array = input_array.reshape(
-        1, 28, 28, 1
+    # Normalize
+    image_array /= 255.0
+
+    # 28 × 28 → 784
+    features = image_array.reshape(
+        1,
+        784
     )
 
 
@@ -311,18 +353,16 @@ if image is not None:
     # PREDICTION
     # ========================================================
 
-    probabilities = model.predict(
-        input_array,
-        verbose=0
-    )[0]
+    prediction, probabilities = \
+        predict_digit(
+            model,
+            features,
+            k=k_value
+        )
 
-    prediction = int(
-        np.argmax(probabilities)
-    )
-
-    confidence = float(
-        probabilities[prediction]
-    )
+    confidence = probabilities[
+        prediction
+    ]
 
 
     # ========================================================
@@ -330,7 +370,9 @@ if image is not None:
     # ========================================================
 
     st.markdown(
-        '<div class="section-title">4️⃣ CNN classification result</div>',
+        '<div class="section">'
+        '4️⃣ Classification result'
+        '</div>',
         unsafe_allow_html=True
     )
 
@@ -340,12 +382,13 @@ if image is not None:
 
         <div>Predicted digit</div>
 
-        <div class="prediction-digit">
+        <div class="prediction">
         {prediction}
         </div>
 
         <div>
-        Confidence: <b>{confidence * 100:.2f}%</b>
+        Estimated confidence:
+        <b>{confidence * 100:.2f}%</b>
         </div>
 
         </div>
@@ -361,20 +404,22 @@ if image is not None:
     if show_probabilities:
 
         st.markdown(
-            '<div class="section-title">'
-            '5️⃣ What did the CNN think?'
+            '<div class="section">'
+            '5️⃣ Class probabilities'
             '</div>',
             unsafe_allow_html=True
         )
 
         st.write(
             """
-            The final CNN layer produces a probability for every
-            possible digit from 0 to 9.
+            KNN does not naturally produce probabilities like
+            a neural network. Here the values are calculated
+            from the voting distribution of the K nearest
+            neighbors.
             """
         )
 
-        fig = plot_prediction_probabilities(
+        fig = plot_probabilities(
             probabilities,
             prediction
         )
@@ -384,132 +429,129 @@ if image is not None:
             use_container_width=True
         )
 
-        # ----------------------------------------------------
-        # NUMERICAL PROBABILITIES
-        # ----------------------------------------------------
-
-        st.subheader("Class probabilities")
-
-        probability_columns = st.columns(5)
-
-        for digit in range(10):
-
-            with probability_columns[digit % 5]:
-
-                st.metric(
-                    label=f"Digit {digit}",
-                    value=f"{probabilities[digit] * 100:.2f}%"
-                )
-
 
     # ========================================================
-    # CNN FEATURE MAPS
+    # NEAREST NEIGHBORS
     # ========================================================
 
-    if show_feature_maps:
+    if show_neighbors:
 
         st.markdown(
-            '<div class="section-title">'
-            '6️⃣ What is happening inside the CNN?'
+            '<div class="section">'
+            '6️⃣ Which training examples influenced the decision?'
             '</div>',
             unsafe_allow_html=True
         )
 
         st.write(
-            """
-            The first convolutional layer learns simple visual
-            patterns such as edges, curves and stroke directions.
+            f"""
+            KNN finds the **{k_value} most similar images**
+            in the MNIST training dataset.
 
-            The next convolutional layer combines these patterns
-            into more meaningful shapes.
+            These examples are the neighbors used to determine
+            the predicted class.
             """
         )
 
-        # Find convolutional layers
-        conv_layers = [
-            layer
-            for layer in model.layers
-            if isinstance(
-                layer,
-                tf.keras.layers.Conv2D
-            )
-        ]
-
-        if len(conv_layers) > 0:
-
-            feature_model = tf.keras.Model(
-                inputs=model.input,
-                outputs=[
-                    layer.output
-                    for layer in conv_layers
-                ]
+        distances, neighbor_images, neighbor_labels = \
+            get_nearest_neighbors(
+                model,
+                features,
+                X_train,
+                y_train,
+                k=k_value
             )
 
-            feature_maps = feature_model.predict(
-                input_array,
-                verbose=0
-            )
+        fig = plot_nearest_neighbors(
+            neighbor_images,
+            neighbor_labels,
+            distances
+        )
 
-            layer_names = [
-                layer.name
-                for layer in conv_layers
-            ]
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
 
-            selected_layer = st.selectbox(
-                "Select convolution layer:",
-                range(len(layer_names)),
-                format_func=lambda x: layer_names[x]
-            )
 
-            selected_maps = feature_maps[selected_layer]
+        # ----------------------------------------------------
+        # VOTING TABLE
+        # ----------------------------------------------------
 
-            fig = plot_feature_maps(
-                selected_maps,
-                max_maps=16
-            )
+        st.subheader(
+            "Neighbor voting"
+        )
 
-            st.pyplot(
-                fig,
-                use_container_width=True
-            )
+        vote_counts = {}
 
-        else:
+        for label in neighbor_labels:
 
-            st.warning(
-                "No convolutional layers were found."
+            label = int(label)
+
+            vote_counts[label] = \
+                vote_counts.get(
+                    label,
+                    0
+                ) + 1
+
+        sorted_votes = sorted(
+            vote_counts.items(),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        for label, count in sorted_votes:
+
+            percentage = (
+                count /
+                k_value
+            ) * 100
+
+            st.write(
+                f"**Digit {label}:** "
+                f"{count}/{k_value} votes "
+                f"({percentage:.1f}%)"
             )
 
 
     # ========================================================
-    # SIMPLE EXPLANATION
+    # HOW KNN WORKS
     # ========================================================
 
     st.markdown(
-        '<div class="section-title">'
-        '🧠 How did the classifier make the decision?'
+        '<div class="section">'
+        '🧠 How did KNN classify the digit?'
         '</div>',
         unsafe_allow_html=True
     )
 
     st.info(
         f"""
-        **Step 1:** The input image was converted to grayscale.
+        **Step 1 — Image representation**
 
-        **Step 2:** The digit was normalized and resized to 28 × 28 pixels.
+        The 28 × 28 image contains 784 pixels.
+        Each pixel becomes a feature.
 
-        **Step 3:** The CNN convolution layers detected visual patterns
-        such as edges, curves and strokes.
+        **Step 2 — Distance calculation**
 
-        **Step 4:** Deeper layers combined these patterns into
-        digit-specific features.
+        KNN compares the uploaded digit with training
+        examples using distance between their 784-dimensional
+        feature vectors.
 
-        **Step 5:** The final Softmax layer produced probabilities
-        for digits 0–9.
+        **Step 3 — Find nearest neighbors**
 
-        **Step 6:** The digit with the highest probability was selected.
+        The algorithm selects the {k_value} most similar
+        training images.
 
-        Therefore, the CNN predicted **{prediction}**
-        with a probability of **{confidence * 100:.2f}%**.
+        **Step 4 — Voting**
+
+        The neighboring images vote for their digit classes.
+
+        **Step 5 — Final prediction**
+
+        The digit receiving the strongest vote is selected.
+
+        **Final prediction: {prediction}**
         """
     )
 
@@ -521,23 +563,26 @@ if image is not None:
 else:
 
     st.info(
-        "👆 Upload an image or use the camera to begin."
+        "👆 Upload a handwritten digit or use the camera to begin."
     )
 
     st.markdown(
         """
-        ### Recommended input
+        ### ✍️ For the best results
 
-        For the best demonstration:
+        Write one digit:
 
-        - Write **one digit** using a thick black pen.
-        - Use a **white sheet of paper**.
-        - Keep the digit approximately centered.
-        - Avoid shadows where possible.
-        - Take the photograph from directly above.
+        - Use a black or dark pen.
+        - Use white paper.
+        - Make the digit reasonably large.
+        - Keep it approximately centered.
+        - Avoid multiple digits in the same image.
 
-        The application will automatically convert the photograph
-        into the 28 × 28 format used by MNIST.
+        ### 🎓 What students can learn
+
+        This application demonstrates:
+
+        **Image → Features → Distance → Neighbors → Voting → Classification**
         """
     )
 
@@ -549,5 +594,6 @@ else:
 st.divider()
 
 st.caption(
-    "MNIST CNN Demonstration • Built with Streamlit and TensorFlow"
+    "MNIST Machine Learning Demonstration • "
+    "K-Nearest Neighbors + Streamlit"
 )
