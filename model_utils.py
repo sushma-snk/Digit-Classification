@@ -2,15 +2,19 @@ import os
 import pickle
 import numpy as np
 
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
 from tensorflow.keras.datasets import mnist
 
 
 # ============================================================
-# CONSTANTS
+# SETTINGS
 # ============================================================
 
-DEFAULT_K = 5
+DEFAULT_TRAINING_SAMPLES = 20000
+
+SVM_C = 10
+
+SVM_GAMMA = "scale"
 
 
 # ============================================================
@@ -19,7 +23,7 @@ DEFAULT_K = 5
 
 def load_mnist():
 
-    print("Loading MNIST dataset...")
+    print("Loading MNIST...")
 
     (
         X_train,
@@ -29,17 +33,28 @@ def load_mnist():
         y_test
     ) = mnist.load_data()
 
+
+    # --------------------------------------------------------
+    # Normalize
+    # --------------------------------------------------------
+
     X_train = (
-        X_train.astype(np.float32)
-        / 255.0
+        X_train.astype(
+            np.float32
+        ) / 255.0
     )
 
     X_test = (
-        X_test.astype(np.float32)
-        / 255.0
+        X_test.astype(
+            np.float32
+        ) / 255.0
     )
 
-    # 28 × 28 → 784
+
+    # --------------------------------------------------------
+    # Flatten
+    # --------------------------------------------------------
+
     X_train = X_train.reshape(
         X_train.shape[0],
         784
@@ -50,6 +65,30 @@ def load_mnist():
         784
     )
 
+
+    # --------------------------------------------------------
+    # Use a subset for faster SVM training
+    # --------------------------------------------------------
+
+    rng = np.random.default_rng(
+        42
+    )
+
+    indices = rng.choice(
+        len(X_train),
+        size=DEFAULT_TRAINING_SAMPLES,
+        replace=False
+    )
+
+    X_train = X_train[
+        indices
+    ]
+
+    y_train = y_train[
+        indices
+    ]
+
+
     return (
         X_train,
         y_train,
@@ -59,20 +98,25 @@ def load_mnist():
 
 
 # ============================================================
-# TRAIN KNN
+# TRAIN SVM
 # ============================================================
 
-def train_knn(
+def train_svm(
     X_train,
-    y_train,
-    k=DEFAULT_K
+    y_train
 ):
 
-    model = KNeighborsClassifier(
-        n_neighbors=k,
-        weights="distance",
-        metric="euclidean",
-        n_jobs=-1
+    print(
+        "Training SVM..."
+    )
+
+    model = SVC(
+        kernel="rbf",
+        C=SVM_C,
+        gamma=SVM_GAMMA,
+        probability=True,
+        random_state=42,
+        cache_size=1000
     )
 
     model.fit(
@@ -92,7 +136,9 @@ def save_model(
     path
 ):
 
-    directory = os.path.dirname(path)
+    directory = os.path.dirname(
+        path
+    )
 
     if directory:
 
@@ -131,24 +177,71 @@ def load_model(
 
 
 # ============================================================
+# CUSTOM DATA
+# ============================================================
+
+def load_custom_data(
+    path
+):
+
+    if not os.path.exists(
+        path
+    ):
+
+        return (
+            np.empty(
+                (0, 784),
+                dtype=np.float32
+            ),
+            np.empty(
+                (0,),
+                dtype=np.int64
+            )
+        )
+
+
+    with open(
+        path,
+        "rb"
+    ) as file:
+
+        data = pickle.load(
+            file
+        )
+
+
+    return (
+        data["X"],
+        data["y"]
+    )
+
+
+# ============================================================
 # SAVE CUSTOM DATA
 # ============================================================
 
 def save_custom_data(
-    X_custom,
-    y_custom,
-    path="models/custom_data.pkl"
+    X,
+    y,
+    path
 ):
 
-    os.makedirs(
-        os.path.dirname(path),
-        exist_ok=True
+    directory = os.path.dirname(
+        path
     )
 
+    if directory:
+
+        os.makedirs(
+            directory,
+            exist_ok=True
+        )
+
     data = {
-        "X": X_custom,
-        "y": y_custom
+        "X": X,
+        "y": y
     }
+
 
     with open(
         path,
@@ -162,48 +255,12 @@ def save_custom_data(
 
 
 # ============================================================
-# LOAD CUSTOM DATA
-# ============================================================
-
-def load_custom_data(
-    path="models/custom_data.pkl"
-):
-
-    if not os.path.exists(path):
-
-        return (
-            np.empty(
-                (0, 784),
-                dtype=np.float32
-            ),
-            np.empty(
-                (0,),
-                dtype=np.int64
-            )
-        )
-
-    with open(
-        path,
-        "rb"
-    ) as file:
-
-        data = pickle.load(
-            file
-        )
-
-    return (
-        data["X"],
-        data["y"]
-    )
-
-
-# ============================================================
 # LOAD OR TRAIN MODEL
 # ============================================================
 
 def load_or_train_model(
-    model_path="models/mnist_knn.pkl",
-    custom_data_path="models/custom_data.pkl"
+    model_path,
+    custom_data_path
 ):
 
     (
@@ -215,7 +272,7 @@ def load_or_train_model(
 
 
     # --------------------------------------------------------
-    # Load student-corrected examples
+    # Load custom examples
     # --------------------------------------------------------
 
     (
@@ -227,19 +284,19 @@ def load_or_train_model(
 
 
     # --------------------------------------------------------
-    # Add custom examples
+    # Combine data
     # --------------------------------------------------------
 
     if len(X_custom) > 0:
 
-        X_train_combined = np.vstack(
+        X_combined = np.vstack(
             [
                 X_train,
                 X_custom
             ]
         )
 
-        y_train_combined = np.concatenate(
+        y_combined = np.concatenate(
             [
                 y_train,
                 y_custom
@@ -248,13 +305,13 @@ def load_or_train_model(
 
     else:
 
-        X_train_combined = X_train
+        X_combined = X_train
 
-        y_train_combined = y_train
+        y_combined = y_train
 
 
     # --------------------------------------------------------
-    # Load existing model
+    # Existing model
     # --------------------------------------------------------
 
     if os.path.exists(
@@ -262,30 +319,39 @@ def load_or_train_model(
     ):
 
         print(
-            "Loading saved KNN model..."
+            "Loading saved SVM..."
         )
 
         model = load_model(
             model_path
         )
 
-        # Refit with custom examples if necessary
+
+        # If custom examples exist,
+        # retrain using the combined data.
+
         if len(X_custom) > 0:
 
             model.fit(
-                X_train_combined,
-                y_train_combined
+                X_combined,
+                y_combined
             )
+
+            save_model(
+                model,
+                model_path
+            )
+
+
+    # --------------------------------------------------------
+    # New model
+    # --------------------------------------------------------
 
     else:
 
-        print(
-            "Training new KNN model..."
-        )
-
-        model = train_knn(
-            X_train_combined,
-            y_train_combined
+        model = train_svm(
+            X_combined,
+            y_combined
         )
 
         save_model(
@@ -296,132 +362,12 @@ def load_or_train_model(
 
     return (
         model,
-        X_train_combined,
-        y_train_combined,
+        X_combined,
+        y_combined,
         X_test,
         y_test,
         X_custom,
         y_custom
-    )
-
-
-# ============================================================
-# ADD CORRECTED EXAMPLE
-# ============================================================
-
-def add_corrected_example(
-    image_features,
-    correct_label,
-    X_custom,
-    y_custom
-):
-
-    image_features = np.asarray(
-        image_features,
-        dtype=np.float32
-    ).reshape(
-        1,
-        784
-    )
-
-    new_label = np.array(
-        [correct_label],
-        dtype=np.int64
-    )
-
-    if len(X_custom) == 0:
-
-        X_updated = image_features
-
-        y_updated = new_label
-
-    else:
-
-        X_updated = np.vstack(
-            [
-                X_custom,
-                image_features
-            ]
-        )
-
-        y_updated = np.concatenate(
-            [
-                y_custom,
-                new_label
-            ]
-        )
-
-    return (
-        X_updated,
-        y_updated
-    )
-
-
-# ============================================================
-# RETRAIN / UPDATE MODEL
-# ============================================================
-
-def update_model(
-    X_original,
-    y_original,
-    X_custom,
-    y_custom,
-    k=DEFAULT_K,
-    model_path="models/mnist_knn.pkl"
-):
-
-    # --------------------------------------------------------
-    # Combine original + corrected examples
-    # --------------------------------------------------------
-
-    if len(X_custom) > 0:
-
-        X_combined = np.vstack(
-            [
-                X_original,
-                X_custom
-            ]
-        )
-
-        y_combined = np.concatenate(
-            [
-                y_original,
-                y_custom
-            ]
-        )
-
-    else:
-
-        X_combined = X_original
-
-        y_combined = y_original
-
-
-    # --------------------------------------------------------
-    # Train updated KNN
-    # --------------------------------------------------------
-
-    model = train_knn(
-        X_combined,
-        y_combined,
-        k=k
-    )
-
-
-    # --------------------------------------------------------
-    # Save model
-    # --------------------------------------------------------
-
-    save_model(
-        model,
-        model_path
-    )
-
-
-    return (
-        model,
-        X_combined,
-        y_combined
     )
 
 
@@ -431,15 +377,8 @@ def update_model(
 
 def predict_digit(
     model,
-    features,
-    k=5
+    features
 ):
-
-    original_k = model.n_neighbors
-
-    model.set_params(
-        n_neighbors=k
-    )
 
     prediction = int(
         model.predict(
@@ -447,13 +386,12 @@ def predict_digit(
         )[0]
     )
 
-    probabilities = model.predict_proba(
-        features
-    )[0]
 
-    model.set_params(
-        n_neighbors=original_k
-    )
+    probabilities = \
+        model.predict_proba(
+            features
+        )[0]
+
 
     return (
         prediction,
@@ -462,36 +400,120 @@ def predict_digit(
 
 
 # ============================================================
-# NEAREST NEIGHBORS
+# RETRAIN WITH NEW EXAMPLE
 # ============================================================
 
-def get_nearest_neighbors(
-    model,
+def retrain_with_new_example(
     features,
+    correct_label,
     X_train,
     y_train,
-    k=5
+    X_custom,
+    y_custom,
+    model_path,
+    custom_data_path
 ):
 
-    distances, indices = model.kneighbors(
-        features,
-        n_neighbors=k
+    # --------------------------------------------------------
+    # Convert label
+    # --------------------------------------------------------
+
+    correct_label = int(
+        correct_label
     )
 
-    distances = distances[0]
 
-    indices = indices[0]
+    # --------------------------------------------------------
+    # Add new example to custom data
+    # --------------------------------------------------------
 
-    neighbor_images = X_train[
-        indices
-    ]
+    new_X = features.astype(
+        np.float32
+    )
 
-    neighbor_labels = y_train[
-        indices
-    ]
+    new_y = np.array(
+        [correct_label],
+        dtype=np.int64
+    )
+
+
+    if len(X_custom) == 0:
+
+        updated_X_custom = new_X
+
+        updated_y_custom = new_y
+
+    else:
+
+        updated_X_custom = np.vstack(
+            [
+                X_custom,
+                new_X
+            ]
+        )
+
+        updated_y_custom = np.concatenate(
+            [
+                y_custom,
+                new_y
+            ]
+        )
+
+
+    # --------------------------------------------------------
+    # Save custom examples
+    # --------------------------------------------------------
+
+    save_custom_data(
+        updated_X_custom,
+        updated_y_custom,
+        custom_data_path
+    )
+
+
+    # --------------------------------------------------------
+    # Combine with original training data
+    # --------------------------------------------------------
+
+    X_combined = np.vstack(
+        [
+            X_train,
+            new_X
+        ]
+    )
+
+    y_combined = np.concatenate(
+        [
+            y_train,
+            new_y
+        ]
+    )
+
+
+    # --------------------------------------------------------
+    # Retrain SVM
+    # --------------------------------------------------------
+
+    new_model = train_svm(
+        X_combined,
+        y_combined
+    )
+
+
+    # --------------------------------------------------------
+    # Save updated model
+    # --------------------------------------------------------
+
+    save_model(
+        new_model,
+        model_path
+    )
+
 
     return (
-        distances,
-        neighbor_images,
-        neighbor_labels
+        new_model,
+        X_combined,
+        y_combined,
+        updated_X_custom,
+        updated_y_custom
     )
