@@ -6,9 +6,7 @@ from PIL import Image
 from model_utils import (
     load_or_train_model,
     predict_digit,
-    get_nearest_neighbors,
-    add_corrected_example,
-    update_model,
+    retrain_with_new_example,
     save_custom_data
 )
 
@@ -16,40 +14,49 @@ from preprocessing import preprocess_image
 
 from visualization import (
     plot_probabilities,
-    plot_nearest_neighbors
+    plot_feature_importance,
+    plot_confusion_matrix
 )
 
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
-    page_title="MNIST ML Classifier",
+    page_title="MNIST SVM Digit Classifier",
     page_icon="🔢",
     layout="wide"
 )
 
 
 # ============================================================
-# CSS
+# CUSTOM CSS
 # ============================================================
 
 st.markdown(
     """
     <style>
 
-    .title {
+    .main-title {
         text-align: center;
         font-size: 42px;
-        font-weight: bold;
+        font-weight: 700;
+        margin-bottom: 5px;
     }
 
     .subtitle {
         text-align: center;
-        color: #666;
         font-size: 18px;
+        color: #666;
         margin-bottom: 30px;
+    }
+
+    .section-title {
+        font-size: 27px;
+        font-weight: 700;
+        margin-top: 25px;
+        margin-bottom: 15px;
     }
 
     .prediction-box {
@@ -57,17 +64,12 @@ st.markdown(
         border-radius: 15px;
         text-align: center;
         background-color: #f1f5f9;
+        margin-top: 15px;
     }
 
-    .prediction {
+    .prediction-digit {
         font-size: 80px;
-        font-weight: bold;
-    }
-
-    .section {
-        font-size: 26px;
-        font-weight: bold;
-        margin-top: 25px;
+        font-weight: 800;
     }
 
     </style>
@@ -81,7 +83,7 @@ st.markdown(
 # ============================================================
 
 st.markdown(
-    '<div class="title">'
+    '<div class="main-title">'
     '🔢 MNIST Handwritten Digit Classifier'
     '</div>',
     unsafe_allow_html=True
@@ -89,23 +91,33 @@ st.markdown(
 
 st.markdown(
     '<div class="subtitle">'
-    'Machine Learning + Human-in-the-Loop Learning'
+    'Interactive Machine Learning Demonstration using Support Vector Machine'
     '</div>',
     unsafe_allow_html=True
 )
 
 
 # ============================================================
-# PATHS
+# FILE PATHS
 # ============================================================
 
-MODEL_PATH = (
-    "models/mnist_knn.pkl"
-)
+MODEL_PATH = "models/mnist_svm.pkl"
 
-CUSTOM_DATA_PATH = (
-    "models/custom_data.pkl"
-)
+CUSTOM_DATA_PATH = "models/custom_data.pkl"
+
+
+# ============================================================
+# INITIALIZE SESSION STATE
+# ============================================================
+
+if "model_version" not in st.session_state:
+
+    st.session_state.model_version = 0
+
+
+if "correction_message" not in st.session_state:
+
+    st.session_state.correction_message = None
 
 
 # ============================================================
@@ -113,7 +125,7 @@ CUSTOM_DATA_PATH = (
 # ============================================================
 
 @st.cache_resource
-def load_model():
+def load_model(version=0):
 
     return load_or_train_model(
         model_path=MODEL_PATH,
@@ -122,7 +134,7 @@ def load_model():
 
 
 with st.spinner(
-    "Loading MNIST classifier..."
+    "Loading SVM classifier..."
 ):
 
     (
@@ -133,7 +145,9 @@ with st.spinner(
         y_test,
         X_custom,
         y_custom
-    ) = load_model()
+    ) = load_model(
+        st.session_state.model_version
+    )
 
 
 # ============================================================
@@ -141,36 +155,28 @@ with st.spinner(
 # ============================================================
 
 st.sidebar.header(
-    "⚙️ Controls"
+    "⚙️ Demonstration Controls"
 )
 
 show_preprocessing = st.sidebar.checkbox(
     "Show preprocessing",
-    True
-)
-
-show_neighbors = st.sidebar.checkbox(
-    "Show nearest neighbors",
-    True
+    value=True
 )
 
 show_probabilities = st.sidebar.checkbox(
-    "Show probabilities",
-    True
+    "Show class probabilities",
+    value=True
 )
 
-k_value = st.sidebar.slider(
-    "Number of neighbors (K)",
-    1,
-    9,
-    5,
-    2
+show_features = st.sidebar.checkbox(
+    "Show pixel feature importance",
+    value=True
 )
 
 st.sidebar.divider()
 
 st.sidebar.subheader(
-    "📚 Training Data"
+    "📊 Training Information"
 )
 
 st.sidebar.metric(
@@ -179,29 +185,43 @@ st.sidebar.metric(
 )
 
 st.sidebar.metric(
-    "Student-corrected samples",
+    "Student-added samples",
     len(X_custom)
 )
 
 st.sidebar.metric(
-    "Total training samples",
+    "Current training samples",
     len(X_train)
+)
+
+st.sidebar.divider()
+
+st.sidebar.write(
+    """
+    ### SVM
+
+    The Support Vector Machine finds a decision boundary
+    that separates the different digit classes.
+
+    For this demonstration, an RBF kernel is used.
+    """
 )
 
 
 # ============================================================
-# INPUT
+# MAIN INPUT SECTION
 # ============================================================
 
 st.markdown(
-    '<div class="section">'
+    '<div class="section-title">'
     '1️⃣ Provide a handwritten digit'
     '</div>',
     unsafe_allow_html=True
 )
 
+
 input_method = st.radio(
-    "Input method:",
+    "Choose input method:",
     [
         "Upload image",
         "Use camera"
@@ -212,10 +232,14 @@ input_method = st.radio(
 image = None
 
 
+# ============================================================
+# UPLOAD
+# ============================================================
+
 if input_method == "Upload image":
 
     uploaded_file = st.file_uploader(
-        "Upload handwritten digit",
+        "Upload a handwritten digit",
         type=[
             "png",
             "jpg",
@@ -223,19 +247,24 @@ if input_method == "Upload image":
         ]
     )
 
-    if uploaded_file:
+    if uploaded_file is not None:
 
         image = Image.open(
             uploaded_file
         ).convert("L")
 
+
+# ============================================================
+# CAMERA
+# ============================================================
+
 else:
 
     camera_image = st.camera_input(
-        "Capture handwritten digit"
+        "Capture a handwritten digit"
     )
 
-    if camera_image:
+    if camera_image is not None:
 
         image = Image.open(
             camera_image
@@ -243,14 +272,40 @@ else:
 
 
 # ============================================================
-# PROCESS IMAGE
+# CLASSIFICATION
 # ============================================================
 
 if image is not None:
 
-    # --------------------------------------------------------
-    # Preprocess
-    # --------------------------------------------------------
+    # ========================================================
+    # DISPLAY INPUT
+    # ========================================================
+
+    st.markdown(
+        '<div class="section-title">'
+        '2️⃣ Input image'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    col1, col2 = st.columns(2)
+
+
+    with col1:
+
+        st.subheader(
+            "Original image"
+        )
+
+        st.image(
+            image,
+            width=300
+        )
+
+
+    # ========================================================
+    # PREPROCESS
+    # ========================================================
 
     processed_image, steps = \
         preprocess_image(
@@ -259,34 +314,10 @@ if image is not None:
         )
 
 
-    # --------------------------------------------------------
-    # Display images
-    # --------------------------------------------------------
-
-    st.markdown(
-        '<div class="section">'
-        '2️⃣ Input'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        st.subheader(
-            "Original"
-        )
-
-        st.image(
-            image,
-            width=300
-        )
-
     with col2:
 
         st.subheader(
-            "MNIST-style"
+            "MNIST-style image"
         )
 
         st.image(
@@ -296,19 +327,27 @@ if image is not None:
 
 
     # ========================================================
-    # PREPROCESSING
+    # PREPROCESSING VISUALIZATION
     # ========================================================
 
     if show_preprocessing:
 
         st.markdown(
-            '<div class="section">'
-            '3️⃣ Preprocessing'
+            '<div class="section-title">'
+            '3️⃣ Image preprocessing'
             '</div>',
             unsafe_allow_html=True
         )
 
-        cols = st.columns(4)
+        st.write(
+            """
+            The SVM was trained using 28 × 28 MNIST images.
+            Therefore, the camera/uploaded image must first be
+            converted into the same representation.
+            """
+        )
+
+        columns = st.columns(4)
 
         names = [
             "Grayscale",
@@ -319,7 +358,7 @@ if image is not None:
 
         for i in range(4):
 
-            with cols[i]:
+            with columns[i]:
 
                 st.caption(
                     names[i]
@@ -332,7 +371,7 @@ if image is not None:
 
 
     # ========================================================
-    # FEATURES
+    # CREATE 784 FEATURES
     # ========================================================
 
     image_array = np.array(
@@ -356,13 +395,12 @@ if image is not None:
     prediction, probabilities = \
         predict_digit(
             model,
-            features,
-            k=k_value
+            features
         )
 
-    confidence = probabilities[
-        prediction
-    ]
+    confidence = float(
+        probabilities[prediction]
+    )
 
 
     # ========================================================
@@ -370,8 +408,8 @@ if image is not None:
     # ========================================================
 
     st.markdown(
-        '<div class="section">'
-        '4️⃣ Prediction'
+        '<div class="section-title">'
+        '4️⃣ SVM classification result'
         '</div>',
         unsafe_allow_html=True
     )
@@ -382,12 +420,12 @@ if image is not None:
 
         <div>Predicted digit</div>
 
-        <div class="prediction">
+        <div class="prediction-digit">
         {prediction}
         </div>
 
         <div>
-        Voting confidence:
+        SVM confidence:
         <b>{confidence * 100:.2f}%</b>
         </div>
 
@@ -404,10 +442,18 @@ if image is not None:
     if show_probabilities:
 
         st.markdown(
-            '<div class="section">'
-            '5️⃣ Class voting'
+            '<div class="section-title">'
+            '5️⃣ SVM class probabilities'
             '</div>',
             unsafe_allow_html=True
+        )
+
+        st.write(
+            """
+            The SVM produces a score for each digit class.
+            These scores are converted into probability-like
+            values using probability calibration.
+            """
         )
 
         fig = plot_probabilities(
@@ -422,40 +468,52 @@ if image is not None:
 
 
     # ========================================================
-    # NEIGHBORS
+    # FEATURE IMPORTANCE
     # ========================================================
 
-    if show_neighbors:
+    if show_features:
 
         st.markdown(
-            '<div class="section">'
-            '6️⃣ Nearest training examples'
+            '<div class="section-title">'
+            '6️⃣ What pixels are important?'
             '</div>',
             unsafe_allow_html=True
         )
 
-        (
-            distances,
-            neighbor_images,
-            neighbor_labels
-        ) = get_nearest_neighbors(
+        st.write(
+            """
+            Each MNIST image contains 784 pixel features.
+            The visualization below shows the influence of
+            the SVM coefficients for the predicted digit.
+            """
+        )
+
+        if hasattr(
             model,
-            features,
-            X_train,
-            y_train,
-            k=k_value
-        )
+            "coef_"
+        ):
 
-        fig = plot_nearest_neighbors(
-            neighbor_images,
-            neighbor_labels,
-            distances
-        )
+            fig = plot_feature_importance(
+                model,
+                prediction
+            )
 
-        st.pyplot(
-            fig,
-            use_container_width=True
-        )
+            st.pyplot(
+                fig,
+                use_container_width=True
+            )
+
+        else:
+
+            st.info(
+                """
+                The RBF kernel does not provide a direct
+                784-pixel coefficient map.
+
+                The SVM decision scores and probabilities
+                above show the classification decision.
+                """
+            )
 
 
     # ========================================================
@@ -463,7 +521,7 @@ if image is not None:
     # ========================================================
 
     st.markdown(
-        '<div class="section">'
+        '<div class="section-title">'
         '7️⃣ Was the prediction correct?'
         '</div>',
         unsafe_allow_html=True
@@ -472,131 +530,111 @@ if image is not None:
     feedback = st.radio(
         "Tell the system:",
         [
-            "Yes, the prediction is correct",
-            "No, the prediction is incorrect"
+            "Yes, prediction is correct",
+            "No, prediction is incorrect"
         ],
         key="prediction_feedback"
     )
 
 
     # ========================================================
-    # CORRECT PREDICTION
+    # CORRECT
     # ========================================================
 
-    if feedback == \
-            "Yes, the prediction is correct":
+    if feedback == "Yes, prediction is correct":
 
         st.success(
-            f"Great! The model correctly classified "
-            f"this digit as **{prediction}**."
+            f"""
+            ✅ The model correctly classified this image
+            as **{prediction}**.
+            """
         )
 
 
     # ========================================================
-    # INCORRECT PREDICTION
+    # INCORRECT
     # ========================================================
 
     else:
 
         st.warning(
-            f"The model predicted **{prediction}**. "
-            "Let's correct it."
+            f"""
+            The SVM predicted **{prediction}**.
+            If this is incorrect, provide the correct label
+            below and add this example to the training data.
+            """
         )
+
 
         correct_label = st.selectbox(
-            "What is the correct digit?",
+            "Correct digit:",
             list(range(10)),
-            key="correct_label"
+            key="correct_digit"
         )
 
 
-        # ----------------------------------------------------
-        # Correct label button
-        # ----------------------------------------------------
+        st.image(
+            processed_image,
+            width=150,
+            caption="Example to be added to training data"
+        )
+
 
         if st.button(
-            "➕ Add corrected example and update model",
-            type="primary"
+            "➕ Add corrected example and retrain SVM",
+            type="primary",
+            key="retrain_button"
         ):
 
-            # -----------------------------------------------
-            # Add example
-            # -----------------------------------------------
+            with st.spinner(
+                "Adding example and retraining SVM..."
+            ):
 
-            (
-                X_custom_updated,
-                y_custom_updated
-            ) = add_corrected_example(
-                features,
-                correct_label,
-                X_custom,
-                y_custom
-            )
+                # ------------------------------------------------
+                # RETRAIN
+                # ------------------------------------------------
 
-
-            # -----------------------------------------------
-            # Save custom data
-            # -----------------------------------------------
-
-            save_custom_data(
-                X_custom_updated,
-                y_custom_updated,
-                CUSTOM_DATA_PATH
-            )
-
-
-            # -----------------------------------------------
-            # Update KNN
-            # -----------------------------------------------
-
-            (
-                updated_model,
-                X_updated,
-                y_updated
-            ) = update_model(
-                X_train,
-                y_train,
-                X_custom_updated,
-                y_custom_updated,
-                k=k_value,
-                model_path=MODEL_PATH
-            )
+                (
+                    new_model,
+                    new_X_train,
+                    new_y_train,
+                    new_X_custom,
+                    new_y_custom
+                ) = retrain_with_new_example(
+                    features,
+                    correct_label,
+                    X_train,
+                    y_train,
+                    X_custom,
+                    y_custom,
+                    model_path=MODEL_PATH,
+                    custom_data_path=CUSTOM_DATA_PATH
+                )
 
 
-            # -----------------------------------------------
-            # Update Streamlit state
-            # -----------------------------------------------
+                # ------------------------------------------------
+                # Save correction information
+                # ------------------------------------------------
 
-            st.session_state[
-                "model_updated"
-            ] = True
+                st.session_state.correction_message = {
+                    "old_prediction": prediction,
+                    "correct_label": correct_label
+                }
 
-            st.session_state[
-                "updated_model"
-            ] = updated_model
 
-            st.session_state[
-                "updated_X"
-            ] = X_updated
+                # ------------------------------------------------
+                # Invalidate cached model
+                # ------------------------------------------------
 
-            st.session_state[
-                "updated_y"
-            ] = y_updated
-
-            st.session_state[
-                "correct_label"
-            ] = correct_label
+                st.session_state.model_version += 1
 
 
             st.success(
                 f"""
-                Example added successfully!
+                ✅ Example labelled as **{correct_label}**
+                and added to the training data.
 
-                **Original prediction:** {prediction}
-
-                **Correct label:** {correct_label}
-
-                **New training size:** {len(X_updated):,}
+                The SVM has been retrained.
                 """
             )
 
@@ -605,57 +643,43 @@ if image is not None:
 
 
     # ========================================================
-    # UPDATED MODEL
+    # CORRECTION RESULT
     # ========================================================
 
-    if st.session_state.get(
-        "model_updated",
-        False
-    ):
+    if st.session_state.correction_message is not None:
 
-        updated_model = \
-            st.session_state[
-                "updated_model"
-            ]
+        correction = \
+            st.session_state.correction_message
 
-        updated_X = \
-            st.session_state[
-                "updated_X"
-            ]
-
-        updated_y = \
-            st.session_state[
-                "updated_y"
-            ]
+        old_prediction = \
+            correction["old_prediction"]
 
         correct_label = \
-            st.session_state[
-                "correct_label"
-            ]
+            correction["correct_label"]
 
 
         st.markdown(
-            '<div class="section">'
-            '8️⃣ Updated model'
+            '<div class="section-title">'
+            '8️⃣ After retraining'
             '</div>',
             unsafe_allow_html=True
         )
 
-        st.info(
-            f"""
-            The corrected image has now been added to the
-            training dataset.
 
-            **Original prediction:** {prediction}
+        # ----------------------------------------------------
+        # Load latest model
+        # ----------------------------------------------------
 
-            **Correct label:** {correct_label}
-
-            **Training examples before correction:**
-            {len(X_train):,}
-
-            **Training examples after correction:**
-            {len(updated_X):,}
-            """
+        (
+            latest_model,
+            latest_X_train,
+            latest_y_train,
+            latest_X_test,
+            latest_y_test,
+            latest_X_custom,
+            latest_y_custom
+        ) = load_model(
+            st.session_state.model_version
         )
 
 
@@ -665,25 +689,46 @@ if image is not None:
 
         new_prediction, new_probabilities = \
             predict_digit(
-                updated_model,
-                features,
-                k=k_value
+                latest_model,
+                features
             )
 
 
-        st.subheader(
-            "Prediction after learning"
-        )
+        # ----------------------------------------------------
+        # Display comparison
+        # ----------------------------------------------------
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            st.metric(
+                "Previous prediction",
+                old_prediction
+            )
+
+        with col2:
+
+            st.metric(
+                "Correct label",
+                correct_label
+            )
+
+        with col3:
+
+            st.metric(
+                "New prediction",
+                new_prediction
+            )
+
 
         if new_prediction == correct_label:
 
             st.success(
                 f"""
-                🎉 The updated classifier now predicts:
-
-                **{new_prediction}**
-
-                which matches the corrected label.
+                🎉 The retrained SVM now predicts
+                **{new_prediction}**, which matches the
+                corrected label.
                 """
             )
 
@@ -691,17 +736,14 @@ if image is not None:
 
             st.warning(
                 f"""
-                The updated classifier predicts:
+                The retrained SVM predicts
+                **{new_prediction}**, while the correct
+                label is **{correct_label}**.
 
-                **{new_prediction}**
-
-                The corrected label was:
-
-                **{correct_label}**
-
-                This is actually useful for demonstrating
-                that adding one example does not necessarily
-                guarantee a change in the classifier's decision.
+                This demonstrates that adding a single
+                example does not necessarily change the
+                decision boundary enough to change a
+                prediction.
                 """
             )
 
@@ -709,6 +751,10 @@ if image is not None:
         # ----------------------------------------------------
         # Updated probabilities
         # ----------------------------------------------------
+
+        st.subheader(
+            "Updated SVM probabilities"
+        )
 
         fig = plot_probabilities(
             new_probabilities,
@@ -721,50 +767,21 @@ if image is not None:
         )
 
 
-    # ========================================================
-    # EXPLANATION
-    # ========================================================
+        # ----------------------------------------------------
+        # Clear correction
+        # ----------------------------------------------------
 
-    st.markdown(
-        '<div class="section">'
-        '🧠 What just happened?'
-        '</div>',
-        unsafe_allow_html=True
-    )
+        if st.button(
+            "Clear correction message"
+        ):
 
-    st.info(
-        """
-        This demonstration uses **human-in-the-loop learning**.
+            st.session_state.correction_message = None
 
-        When the model makes a mistake:
-
-        **1. Human identifies the mistake**
-
-        ↓
-
-        **2. Human provides the correct label**
-
-        ↓
-
-        **3. The corrected image becomes a new labelled
-        training example**
-
-        ↓
-
-        **4. The KNN classifier is updated**
-
-        ↓
-
-        **5. Future predictions can use this new example**
-
-        This is a simple example of how machine-learning
-        systems can incorporate new labelled data.
-        """
-    )
+            st.rerun()
 
 
 # ============================================================
-# INITIAL MESSAGE
+# INITIAL SCREEN
 # ============================================================
 
 else:
@@ -775,30 +792,30 @@ else:
 
     st.markdown(
         """
-        ### 🎓 Demonstration flow
+        ### 🎓 Demonstration pipeline
 
         ```text
-        Handwritten Digit
+        Handwritten digit
                 ↓
-        Image Preprocessing
+        Image preprocessing
                 ↓
         28 × 28 pixels
                 ↓
-        784 Features
+        784 features
                 ↓
-        KNN
+        SVM
                 ↓
-        Nearest Neighbors
+        Decision boundary
                 ↓
-        Voting
+        Class probabilities
                 ↓
         Prediction
                 ↓
-        Human Feedback
+        Human feedback
                 ↓
-        Correct Label
+        Correct label
                 ↓
-        Updated Training Data
+        Retrain SVM
         ```
         """
     )
@@ -811,6 +828,6 @@ else:
 st.divider()
 
 st.caption(
-    "MNIST Machine Learning Demonstration | "
-    "KNN + Human-in-the-Loop Learning"
+    "MNIST SVM Demonstration | "
+    "Support Vector Machine + Human-in-the-Loop Learning"
 )
