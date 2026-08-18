@@ -1,17 +1,18 @@
 # 🔢 MNIST Handwritten Digit Classifier
 
-An interactive Streamlit application for demonstrating handwritten digit classification using the K-Nearest Neighbors (KNN) machine learning algorithm.
+An interactive Streamlit application for demonstrating handwritten digit classification using a Support Vector Machine (SVM).
 
-Students can:
+The application allows students to:
 
-- Upload a handwritten digit
-- Capture a handwritten digit using a camera
+- Upload handwritten digit images
+- Capture handwritten digits using a camera
 - Observe image preprocessing
-- See the 784 pixel features
-- Change the value of K
-- See the nearest MNIST training examples
-- Observe the voting process
-- See the final classification
+- See the 28 × 28 MNIST representation
+- View SVM class probabilities
+- Provide feedback when the model is incorrect
+- Add corrected examples to the training dataset
+- Retrain the SVM
+- Compare predictions before and after retraining
 
 ---
 
@@ -20,24 +21,20 @@ Students can:
 ```text
 Handwritten Image
        ↓
-Grayscale Conversion
+Grayscale
        ↓
 Normalization
        ↓
-Digit Extraction
+Digit extraction
        ↓
-Resize to 28 × 28
+28 × 28 image
        ↓
-Flatten
+784 pixel features
        ↓
-784 Features
+SVM
        ↓
-KNN
+Decision function
        ↓
-Distance Calculation
+Class probabilities
        ↓
-K Nearest Neighbors
-       ↓
-Majority Voting
-       ↓
-Predicted Digit
+Predicted digit
