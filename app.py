@@ -1,17 +1,13 @@
 import os
 import numpy as np
 import streamlit as st
+import tensorflow as tf
 from PIL import Image
-import matplotlib.pyplot as plt
 
-from utils.preprocessing import (
-    preprocess_image,
-    make_debug_figure,
-)
-
-from utils.model_utils import (
-    load_model,
-    predict_with_activations,
+from utils.preprocessing import preprocess_image
+from utils.visualization import (
+    plot_prediction_probabilities,
+    plot_feature_maps
 )
 
 
@@ -22,16 +18,8 @@ from utils.model_utils import (
 st.set_page_config(
     page_title="MNIST Digit Classifier",
     page_icon="🔢",
-    layout="wide",
-    initial_sidebar_state="expanded",
+    layout="wide"
 )
-
-
-# ============================================================
-# CONSTANTS
-# ============================================================
-
-MODEL_PATH = "models/mnist_cnn.keras"
 
 
 # ============================================================
@@ -59,1361 +47,497 @@ st.markdown(
     .prediction-box {
         padding: 25px;
         border-radius: 15px;
-        background-color: #f5f7ff;
         text-align: center;
-        border: 1px solid #dfe4ff;
+        background-color: #f1f5f9;
+        margin-top: 20px;
     }
 
     .prediction-digit {
-        font-size: 90px;
+        font-size: 80px;
         font-weight: 800;
     }
 
-    .prediction-label {
-        font-size: 18px;
-        color: #555;
-    }
-
-    .info-card {
-        padding: 20px;
-        border-radius: 12px;
-        background-color: #f7f7f7;
-        margin-bottom: 10px;
+    .section-title {
+        font-size: 26px;
+        font-weight: 700;
+        margin-top: 25px;
     }
 
     </style>
     """,
-    unsafe_allow_html=True,
+    unsafe_allow_html=True
 )
 
 
 # ============================================================
-# MODEL LOADING
+# TITLE
 # ============================================================
+
+st.markdown(
+    '<div class="main-title">🔢 MNIST Handwritten Digit Classifier</div>',
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    '<div class="subtitle">'
+    'Upload or capture a handwritten digit and see how a CNN classifies it.'
+    '</div>',
+    unsafe_allow_html=True
+)
+
+
+# ============================================================
+# MODEL
+# ============================================================
+
+MODEL_PATH = "mnist_cnn.keras"
+
 
 @st.cache_resource
-def get_model():
+def load_model():
 
-    return load_model(
-        MODEL_PATH
-    )
+    if os.path.exists(MODEL_PATH):
 
-
-# ============================================================
-# PROBABILITY GRAPH
-# ============================================================
-
-def plot_probabilities(
-    probabilities,
-    predicted_digit,
-):
-
-    fig, ax = plt.subplots(
-        figsize=(9, 4.5)
-    )
-
-    digits = np.arange(10)
-
-    bars = ax.bar(
-        digits,
-        probabilities,
-    )
-
-    # Highlight predicted digit
-    bars[predicted_digit].set_alpha(
-        1.0
-    )
-
-    ax.set_xticks(
-        digits
-    )
-
-    ax.set_xlabel(
-        "Digit",
-        fontsize=12,
-    )
-
-    ax.set_ylabel(
-        "Probability",
-        fontsize=12,
-    )
-
-    ax.set_ylim(
-        0,
-        1.05,
-    )
-
-    ax.set_title(
-        "CNN Softmax Probabilities",
-        fontsize=15,
-        fontweight="bold",
-    )
-
-    # Display values above bars
-    for digit, probability in enumerate(
-        probabilities
-    ):
-
-        if probability > 0.01:
-
-            ax.text(
-                digit,
-                probability + 0.02,
-                f"{probability:.1%}",
-                ha="center",
-                fontsize=9,
-            )
-
-    fig.tight_layout()
-
-    return fig
-
-
-# ============================================================
-# PREDICTION EXPLANATION
-# ============================================================
-
-def explain_prediction(
-    digit,
-    confidence,
-):
-
-    if confidence >= 0.90:
-
-        confidence_text = (
-            "The model is highly confident."
-        )
-
-    elif confidence >= 0.70:
-
-        confidence_text = (
-            "The model has reasonably high confidence."
-        )
-
-    elif confidence >= 0.50:
-
-        confidence_text = (
-            "The model is somewhat uncertain."
-        )
+        model = tf.keras.models.load_model(MODEL_PATH)
 
     else:
 
-        confidence_text = (
-            "The model is uncertain about the prediction."
+        st.info(
+            "The trained model was not found. "
+            "Training a CNN on MNIST for the first time..."
         )
 
-    return f"""
-### 🤖 Why did the CNN predict {digit}?
+        from train_model import train_model
 
-The CNN processed the 28 × 28 image and extracted
-patterns such as **edges, curves and strokes** using
-convolution filters.
+        model = train_model(
+            epochs=3,
+            save_path=MODEL_PATH
+        )
 
-These learned features were passed through the deeper
-layers of the network.
-
-Finally, the **Softmax layer** calculated a probability
-for each digit from 0 to 9.
-
-The highest probability corresponds to **digit {digit}**.
-
-**Confidence: {confidence:.2%}**
-
-{confidence_text}
-"""
+    return model
 
 
-# ============================================================
-# HEADER
-# ============================================================
-
-st.markdown(
-    '<div class="main-title">🔢 MNIST Digit Classifier</div>',
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    """
-    <div class="subtitle">
-    An interactive demonstration of handwritten digit
-    classification using a Convolutional Neural Network
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+with st.spinner("Loading MNIST classifier..."):
+    model = load_model()
 
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-with st.sidebar:
+st.sidebar.header("⚙️ Demonstration Controls")
 
-    st.header(
-        "🎓 Student Demo"
-    )
+st.sidebar.write(
+    """
+    This application demonstrates the complete machine-learning
+    pipeline:
 
-    st.markdown(
-        """
-        ### Classification Pipeline
+    **Input → Preprocessing → CNN → Probabilities → Prediction**
+    """
+)
 
-        ```text
-        Handwritten Image
-                ↓
-        Preprocessing
-                ↓
-        28 × 28 Image
-                ↓
-        Convolution
-                ↓
-        Feature Maps
-                ↓
-        Pooling
-                ↓
-        Dense Layer
-                ↓
-        Softmax
-                ↓
-        Prediction
-        ```
-        """
-    )
+show_processing = st.sidebar.checkbox(
+    "Show preprocessing steps",
+    value=True
+)
 
-    st.divider()
+show_feature_maps = st.sidebar.checkbox(
+    "Show CNN feature maps",
+    value=True
+)
 
-    st.subheader(
-        "🧠 Model Information"
-    )
-
-    st.write(
-        "**Dataset:** MNIST"
-    )
-
-    st.write(
-        "**Input:** 28 × 28 grayscale"
-    )
-
-    st.write(
-        "**Classes:** 10 digits"
-    )
-
-    st.write(
-        "**Classifier:** CNN"
-    )
-
-    st.divider()
-
-    st.caption(
-        "MNIST Digit Classification Demo"
-    )
-
-
-# ============================================================
-# CHECK MODEL
-# ============================================================
-
-if not os.path.exists(
-    MODEL_PATH
-):
-
-    st.error(
-        """
-        ### ❌ Trained model not found
-
-        The application expected the trained model at:
-
-        `models/mnist_cnn.keras`
-
-        Please run:
-
-        ```bash
-        python train_model.py
-        ```
-
-        and make sure the generated model is uploaded to
-        your GitHub repository.
-        """
-    )
-
-    st.stop()
-
-
-# ============================================================
-# LOAD MODEL
-# ============================================================
-
-try:
-
-    model = get_model()
-
-except Exception as error:
-
-    st.error(
-        "Unable to load the trained CNN model."
-    )
-
-    st.exception(
-        error
-    )
-
-    st.stop()
-
-
-# ============================================================
-# TABS
-# ============================================================
-
-tab_classify, tab_cnn, tab_teaching = st.tabs(
-    [
-        "🖼️ Classify Digit",
-        "🧠 How CNN Works",
-        "📚 Teaching Mode",
-    ]
+show_probabilities = st.sidebar.checkbox(
+    "Show class probabilities",
+    value=True
 )
 
 
 # ============================================================
-# TAB 1
-# CLASSIFY DIGIT
+# INPUT METHOD
 # ============================================================
 
-with tab_classify:
+st.markdown(
+    '<div class="section-title">1️⃣ Provide a handwritten digit</div>',
+    unsafe_allow_html=True
+)
 
-    st.header(
-        "🖼️ Classify a Handwritten Digit"
+input_method = st.radio(
+    "Choose input method:",
+    [
+        "Upload an image",
+        "Use camera"
+    ],
+    horizontal=True
+)
+
+image = None
+
+
+# ============================================================
+# UPLOAD
+# ============================================================
+
+if input_method == "Upload an image":
+
+    uploaded_file = st.file_uploader(
+        "Upload a handwritten digit image",
+        type=["png", "jpg", "jpeg"]
     )
-
-    st.write(
-        """
-        Upload an image or use your camera to provide a
-        handwritten digit.
-        """
-    )
-
-
-    # --------------------------------------------------------
-    # INPUT METHOD
-    # --------------------------------------------------------
-
-    input_method = st.radio(
-        "Choose input method:",
-        [
-            "📁 Upload Image",
-            "📷 Camera",
-        ],
-        horizontal=True,
-    )
-
-
-    uploaded_file = None
-
-
-    # --------------------------------------------------------
-    # UPLOAD IMAGE
-    # --------------------------------------------------------
-
-    if input_method == "📁 Upload Image":
-
-        uploaded_file = st.file_uploader(
-            "Upload a handwritten digit",
-            type=[
-                "png",
-                "jpg",
-                "jpeg",
-            ],
-            help=(
-                "For best results, use one large handwritten "
-                "digit on a plain background."
-            ),
-        )
-
-
-    # --------------------------------------------------------
-    # CAMERA INPUT
-    # --------------------------------------------------------
-
-    else:
-
-        st.info(
-            """
-            Write one large digit on a piece of white paper,
-            hold it in front of the camera, and capture it.
-            """
-        )
-
-        uploaded_file = st.camera_input(
-            "📷 Capture your handwritten digit"
-        )
-
-
-    # ========================================================
-    # IMAGE RECEIVED
-    # ========================================================
 
     if uploaded_file is not None:
 
-        try:
-
-            image = Image.open(
-                uploaded_file
-            ).convert(
-                "RGB"
-            )
-
-        except Exception:
-
-            st.error(
-                "Unable to read the image."
-            )
-
-            st.stop()
-
-
-        st.divider()
-
-
-        # ====================================================
-        # ORIGINAL IMAGE
-        # ====================================================
-
-        st.subheader(
-            "1️⃣ Original Image"
-        )
-
-
-        col_original, col_processed = st.columns(
-            2
-        )
-
-
-        with col_original:
-
-            st.image(
-                image,
-                caption="Original input",
-                use_container_width=True,
-            )
-
-
-        # ====================================================
-        # PREPROCESSING
-        # ====================================================
-
-        try:
-
-            processed_image, debug_images = (
-                preprocess_image(
-                    image
-                )
-            )
-
-        except Exception as error:
-
-            st.error(
-                "Error during image preprocessing."
-            )
-
-            st.exception(
-                error
-            )
-
-            st.stop()
-
-
-        with col_processed:
-
-            st.image(
-                processed_image,
-                caption="28 × 28 CNN input",
-                width=280,
-            )
-
-
-        st.success(
-            """
-            The image has been converted into a
-            **28 × 28 grayscale image**, similar to
-            the format used by MNIST.
-            """
-        )
-
-
-        # ====================================================
-        # CLASSIFICATION
-        # ====================================================
-
-        st.divider()
-
-        st.subheader(
-            "2️⃣ Classification"
-        )
-
-
-        classify_button = st.button(
-            "🚀 CLASSIFY DIGIT",
-            type="primary",
-            use_container_width=True,
-        )
-
-
-        if classify_button:
-
-            # ----------------------------------------------
-            # PIL → NUMPY
-            # ----------------------------------------------
-
-            image_array = np.array(
-                processed_image,
-                dtype=np.float32,
-            )
-
-
-            # ----------------------------------------------
-            # NORMALIZATION
-            # ----------------------------------------------
-
-            image_array = (
-                image_array / 255.0
-            )
-
-
-            # ----------------------------------------------
-            # ADD CNN DIMENSIONS
-            # ----------------------------------------------
-
-            image_array = image_array.reshape(
-                1,
-                28,
-                28,
-                1,
-            )
-
-
-            # ----------------------------------------------
-            # PREDICTION
-            # ----------------------------------------------
-
-            try:
-
-                probabilities, activations = (
-                    predict_with_activations(
-                        model,
-                        image_array,
-                    )
-                )
-
-            except Exception as error:
-
-                st.error(
-                    "Error while running the CNN."
-                )
-
-                st.exception(
-                    error
-                )
-
-                st.stop()
-
-
-            # ----------------------------------------------
-            # EXTRACT PROBABILITIES
-            # ----------------------------------------------
-
-            probabilities = np.asarray(
-                probabilities[0]
-            )
-
-
-            predicted_digit = int(
-                np.argmax(
-                    probabilities
-                )
-            )
-
-
-            confidence = float(
-                probabilities[
-                    predicted_digit
-                ]
-            )
-
-
-            # =================================================
-            # RESULT
-            # =================================================
-
-            st.divider()
-
-            st.subheader(
-                "3️⃣ Prediction"
-            )
-
-
-            result_left, result_right = st.columns(
-                [
-                    1,
-                    2,
-                ]
-            )
-
-
-            # -------------------------------------------------
-            # PREDICTION
-            # -------------------------------------------------
-
-            with result_left:
-
-                st.markdown(
-                    f"""
-                    <div class="prediction-box">
-
-                    <div class="prediction-label">
-                    Predicted Digit
-                    </div>
-
-                    <div class="prediction-digit">
-                    {predicted_digit}
-                    </div>
-
-                    <div class="prediction-label">
-                    Confidence: {confidence:.2%}
-                    </div>
-
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-
-
-            # -------------------------------------------------
-            # PROBABILITY GRAPH
-            # -------------------------------------------------
-
-            with result_right:
-
-                st.pyplot(
-                    plot_probabilities(
-                        probabilities,
-                        predicted_digit,
-                    ),
-                    use_container_width=True,
-                )
-
-
-            # =================================================
-            # EXPLANATION
-            # =================================================
-
-            st.divider()
-
-            st.markdown(
-                explain_prediction(
-                    predicted_digit,
-                    confidence,
-                )
-            )
-
-
-            # =================================================
-            # PREPROCESSING DETAILS
-            # =================================================
-
-            with st.expander(
-                "🔍 See exactly how the image was processed"
-            ):
-
-                st.write(
-                    """
-                    The CNN was not given the original photograph
-                    directly.
-
-                    The application first performs several
-                    preprocessing operations.
-                    """
-                )
-
-
-                preprocessing_fig = (
-                    make_debug_figure(
-                        image,
-                        debug_images,
-                    )
-                )
-
-
-                st.pyplot(
-                    preprocessing_fig,
-                    use_container_width=True,
-                )
-
-
-                st.markdown(
-                    """
-                    ### Processing sequence
-
-                    **Original image**
-
-                    ↓
-
-                    **Grayscale conversion**
-
-                    ↓
-
-                    **Foreground/background processing**
-
-                    ↓
-
-                    **Digit cropping**
-
-                    ↓
-
-                    **Resize**
-
-                    ↓
-
-                    **Centering**
-
-                    ↓
-
-                    **28 × 28 CNN input**
-                    """
-                )
-
-
-            # =================================================
-            # FEATURE MAPS
-            # =================================================
-
-            with st.expander(
-                "🧩 See what the CNN detects"
-            ):
-
-                st.markdown(
-                    """
-                    ### Feature Maps
-
-                    Each convolution filter learns to respond to
-                    different visual patterns.
-
-                    Early filters may detect simple edges and
-                    strokes. Deeper filters combine these into
-                    more meaningful patterns.
-                    """
-                )
-
-
-                if len(activations) == 0:
-
-                    st.warning(
-                        "No convolution activations are available."
-                    )
-
-                else:
-
-                    layer_names = list(
-                        activations.keys()
-                    )
-
-
-                    selected_layer = st.selectbox(
-                        "Choose a convolution layer:",
-                        layer_names,
-                    )
-
-
-                    feature_maps = (
-                        activations[
-                            selected_layer
-                        ][0]
-                    )
-
-
-                    number_of_filters = min(
-                        feature_maps.shape[-1],
-                        16,
-                    )
-
-
-                    feature_fig, axes = plt.subplots(
-                        4,
-                        4,
-                        figsize=(
-                            10,
-                            10,
-                        ),
-                    )
-
-
-                    axes = axes.flatten()
-
-
-                    for i in range(16):
-
-                        axes[i].axis(
-                            "off"
-                        )
-
-
-                        if i < number_of_filters:
-
-                            axes[i].imshow(
-                                feature_maps[
-                                    :,
-                                    :,
-                                    i
-                                ],
-                                cmap="viridis",
-                            )
-
-
-                            axes[i].set_title(
-                                f"Filter {i + 1}"
-                            )
-
-
-                    feature_fig.suptitle(
-                        (
-                            "CNN Feature Maps — "
-                            f"{selected_layer}"
-                        ),
-                        fontsize=16,
-                    )
-
-
-                    feature_fig.tight_layout()
-
-
-                    st.pyplot(
-                        feature_fig,
-                        use_container_width=True,
-                    )
-
-
-            # =================================================
-            # ALL PROBABILITIES
-            # =================================================
-
-            with st.expander(
-                "📊 View numerical probabilities"
-            ):
-
-                st.write(
-                    "Probability assigned to each digit:"
-                )
-
-
-                for digit in range(10):
-
-                    probability = float(
-                        probabilities[
-                            digit
-                        ]
-                    )
-
-
-                    col_digit, col_bar = st.columns(
-                        [
-                            1,
-                            5,
-                        ]
-                    )
-
-
-                    with col_digit:
-
-                        st.write(
-                            f"**{digit}**"
-                        )
-
-
-                    with col_bar:
-
-                        st.progress(
-                            probability
-                        )
-
-
-                        st.caption(
-                            f"{probability:.4%}"
-                        )
+        image = Image.open(uploaded_file).convert("L")
 
 
 # ============================================================
-# TAB 2
-# HOW CNN WORKS
+# CAMERA
 # ============================================================
 
-with tab_cnn:
+else:
 
-    st.header(
-        "🧠 How Does the CNN Work?"
+    camera_image = st.camera_input(
+        "Take a picture of a handwritten digit"
     )
 
+    if camera_image is not None:
 
-    st.write(
-        """
-        This section can be used directly during your classroom
-        explanation.
-        """
-    )
-
-
-    st.divider()
-
-
-    st.subheader(
-        "The complete classification pipeline"
-    )
-
-
-    st.code(
-        """
-Handwritten Digit
-        │
-        ▼
-Image Preprocessing
-        │
-        ▼
-28 × 28 Grayscale Image
-        │
-        ▼
-Convolution Layer 1
-        │
-        ▼
-ReLU
-        │
-        ▼
-Max Pooling
-        │
-        ▼
-Convolution Layer 2
-        │
-        ▼
-ReLU
-        │
-        ▼
-Max Pooling
-        │
-        ▼
-Flatten
-        │
-        ▼
-Dense Layer
-        │
-        ▼
-Softmax
-        │
-        ▼
-10 Class Probabilities
-        │
-        ▼
-Predicted Digit
-        """,
-        language="text",
-    )
-
-
-    st.divider()
-
-
-    # ========================================================
-    # ARCHITECTURE
-    # ========================================================
-
-    st.subheader(
-        "🏗️ CNN Architecture"
-    )
-
-
-    architecture = {
-
-        "Layer": [
-
-            "Input",
-
-            "Conv2D",
-
-            "MaxPooling2D",
-
-            "Conv2D",
-
-            "MaxPooling2D",
-
-            "Flatten",
-
-            "Dense",
-
-            "Dropout",
-
-            "Output",
-
-        ],
-
-        "Configuration": [
-
-            "28 × 28 × 1",
-
-            "32 filters, 3×3",
-
-            "2 × 2",
-
-            "64 filters, 3×3",
-
-            "2 × 2",
-
-            "1D vector",
-
-            "128 neurons",
-
-            "30%",
-
-            "10 neurons",
-
-        ],
-
-        "Purpose": [
-
-            "Receive image",
-
-            "Detect basic patterns",
-
-            "Reduce image dimensions",
-
-            "Detect complex patterns",
-
-            "Reduce dimensions",
-
-            "Convert feature maps to vector",
-
-            "Combine learned features",
-
-            "Reduce overfitting",
-
-            "Classify digits",
-
-        ],
-    }
-
-
-    st.table(
-        architecture
-    )
-
-
-    # ========================================================
-    # CONVOLUTION
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "🔎 What does convolution do?"
-    )
-
-
-    st.write(
-        """
-        A convolution filter is a small matrix that moves across
-        the image.
-
-        During training, the CNN learns useful filters automatically.
-
-        These filters can learn to detect:
-
-        • Horizontal edges
-
-        • Vertical edges
-
-        • Diagonal strokes
-
-        • Curves
-
-        • Corners
-
-        • Intersections
-        """
-    )
-
-
-    st.latex(
-        r"""
-        Feature\ Map = Input * Filter + Bias
-        """
-    )
-
-
-    # ========================================================
-    # POOLING
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "📉 Why is pooling used?"
-    )
-
-
-    st.write(
-        """
-        Max pooling reduces the spatial size of feature maps.
-
-        This helps:
-
-        • Reduce computation
-
-        • Reduce the number of parameters
-
-        • Preserve strong features
-
-        • Make the representation less sensitive to small shifts
-        """
-    )
-
-
-    # ========================================================
-    # SOFTMAX
-    # ========================================================
-
-    st.divider()
-
-    st.subheader(
-        "🎯 Softmax Classification"
-    )
-
-
-    st.write(
-        """
-        The final layer contains 10 neurons.
-
-        Each neuron represents one digit:
-
-        **0  1  2  3  4  5  6  7  8  9**
-        """
-    )
-
-
-    st.latex(
-        r"""
-        P(y=i|x)
-        =
-        \frac{e^{z_i}}
-        {\sum_{j=0}^{9}e^{z_j}}
-        """
-    )
-
-
-    st.write(
-        """
-        Softmax converts the final neural-network scores into
-        probabilities.
-
-        The digit with the largest probability becomes the
-        predicted class.
-        """
-    )
+        image = Image.open(camera_image).convert("L")
 
 
 # ============================================================
-# TAB 3
-# TEACHING MODE
+# CLASSIFICATION
 # ============================================================
 
-with tab_teaching:
+if image is not None:
 
-    st.header(
-        "📚 Teaching Mode"
+    st.markdown(
+        '<div class="section-title">2️⃣ Input image</div>',
+        unsafe_allow_html=True
     )
 
+    col1, col2 = st.columns(2)
 
-    st.info(
-        """
-        ### Important idea
-
-        A CNN does not simply look at the image and "know" the answer.
-
-        It learns useful mathematical representations from many
-        training examples.
-        """
-    )
-
-
-    st.divider()
-
-
-    # ========================================================
-    # THREE STEPS
-    # ========================================================
-
-    col1, col2, col3 = st.columns(
-        3
-    )
-
+    # --------------------------------------------------------
+    # ORIGINAL IMAGE
+    # --------------------------------------------------------
 
     with col1:
 
-        st.markdown(
-            "### 1️⃣ Pixels"
+        st.subheader("Original image")
+
+        st.image(
+            image,
+            width=300
         )
 
-        st.write(
-            """
-            The handwritten digit is represented as a grid of
-            pixel intensity values.
-            """
-        )
+    # --------------------------------------------------------
+    # PREPROCESSING
+    # --------------------------------------------------------
 
+    processed_image, processing_steps = preprocess_image(
+        image,
+        return_steps=True
+    )
 
     with col2:
 
+        st.subheader("Processed MNIST image")
+
+        st.image(
+            processed_image,
+            width=300,
+            clamp=True
+        )
+
+
+    # ========================================================
+    # SHOW PREPROCESSING
+    # ========================================================
+
+    if show_processing:
+
         st.markdown(
-            "### 2️⃣ Features"
+            '<div class="section-title">'
+            '3️⃣ How the image is prepared'
+            '</div>',
+            unsafe_allow_html=True
         )
 
         st.write(
             """
-            Convolution layers learn patterns such as edges,
-            curves, corners and strokes.
+            A real-world photograph is not directly suitable for the
+            MNIST model. The image is converted into the format expected
+            by the neural network.
             """
         )
 
+        pcols = st.columns(4)
 
-    with col3:
+        step_names = [
+            "Grayscale",
+            "Invert / Normalize",
+            "Crop digit",
+            "Resize to 28 × 28"
+        ]
+
+        for i, (name, step_image) in enumerate(
+            zip(step_names, processing_steps)
+        ):
+
+            with pcols[i]:
+
+                st.caption(name)
+
+                st.image(
+                    step_image,
+                    use_container_width=True
+                )
+
+
+    # ========================================================
+    # MODEL INPUT
+    # ========================================================
+
+    input_array = np.array(processed_image).astype(
+        "float32"
+    ) / 255.0
+
+    input_array = input_array.reshape(
+        1, 28, 28, 1
+    )
+
+
+    # ========================================================
+    # PREDICTION
+    # ========================================================
+
+    probabilities = model.predict(
+        input_array,
+        verbose=0
+    )[0]
+
+    prediction = int(
+        np.argmax(probabilities)
+    )
+
+    confidence = float(
+        probabilities[prediction]
+    )
+
+
+    # ========================================================
+    # RESULT
+    # ========================================================
+
+    st.markdown(
+        '<div class="section-title">4️⃣ CNN classification result</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"""
+        <div class="prediction-box">
+
+        <div>Predicted digit</div>
+
+        <div class="prediction-digit">
+        {prediction}
+        </div>
+
+        <div>
+        Confidence: <b>{confidence * 100:.2f}%</b>
+        </div>
+
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+
+    # ========================================================
+    # PROBABILITY DISTRIBUTION
+    # ========================================================
+
+    if show_probabilities:
 
         st.markdown(
-            "### 3️⃣ Decision"
+            '<div class="section-title">'
+            '5️⃣ What did the CNN think?'
+            '</div>',
+            unsafe_allow_html=True
         )
 
         st.write(
             """
-            The network combines these features and produces
-            probabilities for the ten possible digits.
+            The final CNN layer produces a probability for every
+            possible digit from 0 to 9.
             """
         )
 
-
-    st.divider()
-
-
-    # ========================================================
-    # QUESTIONS
-    # ========================================================
-
-    st.subheader(
-        "💡 Questions to ask students"
-    )
-
-
-    questions = [
-
-        "Why do we convert the image to grayscale?",
-
-        "Why is the input size 28 × 28?",
-
-        "What is a convolution filter?",
-
-        "What type of patterns can convolution filters detect?",
-
-        "Why do we use ReLU?",
-
-        "Why do we use pooling?",
-
-        "Why are there 10 neurons in the output layer?",
-
-        "What does a Softmax probability represent?",
-
-        "Can a classifier be confident but still wrong?",
-
-        "Why might a camera image be harder to classify than an MNIST image?",
-
-        "What happens if we write two digits in one image?",
-
-    ]
-
-
-    for number, question in enumerate(
-        questions,
-        start=1,
-    ):
-
-        st.markdown(
-            f"**{number}.** {question}"
+        fig = plot_prediction_probabilities(
+            probabilities,
+            prediction
         )
 
+        st.pyplot(
+            fig,
+            use_container_width=True
+        )
 
-    st.divider()
+        # ----------------------------------------------------
+        # NUMERICAL PROBABILITIES
+        # ----------------------------------------------------
+
+        st.subheader("Class probabilities")
+
+        probability_columns = st.columns(5)
+
+        for digit in range(10):
+
+            with probability_columns[digit % 5]:
+
+                st.metric(
+                    label=f"Digit {digit}",
+                    value=f"{probabilities[digit] * 100:.2f}%"
+                )
 
 
     # ========================================================
-    # CLASSROOM EXPERIMENT
+    # CNN FEATURE MAPS
     # ========================================================
 
-    st.subheader(
-        "🧪 Classroom Experiment"
+    if show_feature_maps:
+
+        st.markdown(
+            '<div class="section-title">'
+            '6️⃣ What is happening inside the CNN?'
+            '</div>',
+            unsafe_allow_html=True
+        )
+
+        st.write(
+            """
+            The first convolutional layer learns simple visual
+            patterns such as edges, curves and stroke directions.
+
+            The next convolutional layer combines these patterns
+            into more meaningful shapes.
+            """
+        )
+
+        # Find convolutional layers
+        conv_layers = [
+            layer
+            for layer in model.layers
+            if isinstance(
+                layer,
+                tf.keras.layers.Conv2D
+            )
+        ]
+
+        if len(conv_layers) > 0:
+
+            feature_model = tf.keras.Model(
+                inputs=model.input,
+                outputs=[
+                    layer.output
+                    for layer in conv_layers
+                ]
+            )
+
+            feature_maps = feature_model.predict(
+                input_array,
+                verbose=0
+            )
+
+            layer_names = [
+                layer.name
+                for layer in conv_layers
+            ]
+
+            selected_layer = st.selectbox(
+                "Select convolution layer:",
+                range(len(layer_names)),
+                format_func=lambda x: layer_names[x]
+            )
+
+            selected_maps = feature_maps[selected_layer]
+
+            fig = plot_feature_maps(
+                selected_maps,
+                max_maps=16
+            )
+
+            st.pyplot(
+                fig,
+                use_container_width=True
+            )
+
+        else:
+
+            st.warning(
+                "No convolutional layers were found."
+            )
+
+
+    # ========================================================
+    # SIMPLE EXPLANATION
+    # ========================================================
+
+    st.markdown(
+        '<div class="section-title">'
+        '🧠 How did the classifier make the decision?'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
+    st.info(
+        f"""
+        **Step 1:** The input image was converted to grayscale.
+
+        **Step 2:** The digit was normalized and resized to 28 × 28 pixels.
+
+        **Step 3:** The CNN convolution layers detected visual patterns
+        such as edges, curves and strokes.
+
+        **Step 4:** Deeper layers combined these patterns into
+        digit-specific features.
+
+        **Step 5:** The final Softmax layer produced probabilities
+        for digits 0–9.
+
+        **Step 6:** The digit with the highest probability was selected.
+
+        Therefore, the CNN predicted **{prediction}**
+        with a probability of **{confidence * 100:.2f}%**.
+        """
     )
 
 
-    st.write(
-        """
-        Ask students to write the same digit in several different
-        styles.
-        """
-    )
+# ============================================================
+# INITIAL SCREEN
+# ============================================================
 
+else:
+
+    st.info(
+        "👆 Upload an image or use the camera to begin."
+    )
 
     st.markdown(
         """
-        For example, ask them to create:
+        ### Recommended input
 
-        **7**
+        For the best demonstration:
 
-        • Normal 7
+        - Write **one digit** using a thick black pen.
+        - Use a **white sheet of paper**.
+        - Keep the digit approximately centered.
+        - Avoid shadows where possible.
+        - Take the photograph from directly above.
 
-        • Very large 7
-
-        • Very small 7
-
-        • Tilted 7
-
-        • 7 with a horizontal bar
-
-        • Poorly written 7
-
-        • Thick 7
-
-        • Thin 7
-        """
-    )
-
-
-    st.write(
-        """
-        Upload each version and compare the probability distribution.
-
-        This demonstrates an important machine-learning concept:
-
-        **A model learns from its training distribution, so changes
-        in the input can affect its predictions.**
-        """
-    )
-
-
-    st.divider()
-
-
-    st.subheader(
-        "🎯 Key takeaway"
-    )
-
-
-    st.success(
-        """
-        **Machine Learning Pipeline**
-
-        Data → Preprocessing → Feature Learning → Classification → Prediction
-
-        The CNN automatically learns useful features from training
-        examples instead of requiring us to manually program rules
-        such as "a 7 has this shape".
+        The application will automatically convert the photograph
+        into the 28 × 28 format used by MNIST.
         """
     )
 
@@ -1425,5 +549,5 @@ with tab_teaching:
 st.divider()
 
 st.caption(
-    "🔢 MNIST Digit Classifier | CNN Demonstration | Built with Streamlit"
+    "MNIST CNN Demonstration • Built with Streamlit and TensorFlow"
 )
